@@ -36,8 +36,8 @@ int init_raw (void){
   in_mode &= ~ENABLE_LINE_INPUT;
   in_mode &= ~ENABLE_ECHO_INPUT;
   in_mode &= ~ENABLE_PROCESSED_INPUT;
-  // WINDOW RESIZE EVENTS
-  in_mode |= ENABLE_WINDOW_INPUT;
+  // Special keys as ANSI escape sequences
+  in_mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
 
   if(!SetConsoleMode(hin, in_mode))
     return -1;
@@ -119,15 +119,10 @@ int init_raw (void){
   atexit(restore);
 
   struct termios raw = orig_termios;
-  raw.c_iflag &= ~BRKINT;
   raw.c_iflag &= ~ICRNL;
-  raw.c_iflag &= ~INPCK;
-  raw.c_iflag &= ~ISTRIP;
   raw.c_iflag &= ~IXON;
 
   raw.c_oflag &= ~OPOST;
-
-  raw.c_cflag |= CS8;
 
   raw.c_lflag &= ~ECHO;
   raw.c_lflag &= ~ICANON;

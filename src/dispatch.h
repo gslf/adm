@@ -3,12 +3,23 @@
 
 #include "buffer.h"
 
-// Special keys (values outside the ASCII range).
+// A key is either a Unicode code point (0 to 0x10FFFF) or one of the special
+// keys below, which start past the end of the Unicode range so that they can
+// never collide with a typed character.
+#define KEY_SPECIAL 0x110000
+
 enum {
-  KEY_LEFT = 1000,
-  KEY_RIGHT,
-  KEY_UP,
-  KEY_DOWN
+  KEY_LEFT             = 0x110000,
+  KEY_RIGHT            = 0x110001,
+  KEY_UP               = 0x110002,
+  KEY_DOWN             = 0x110003,
+  KEY_CTRL_SHIFT_LEFT  = 0x110004,
+  KEY_CTRL_SHIFT_RIGHT = 0x110005,
+  KEY_CTRL_SHIFT_UP    = 0x110006,
+  KEY_CTRL_SHIFT_DOWN  = 0x110007,
+  KEY_CTRL_LEFT        = 0x110008,
+  KEY_CTRL_RIGHT       = 0x110009,
+  KEY_DELETE           = 0x11000A
 };
 
 // Control-key code.
@@ -21,9 +32,12 @@ typedef struct editor {
   buffer buf;
   const char *filename;
   int cx, cy;         // cursor in file coordinates (column, row)
+  int selx, sely;     // selection anchor, the fixed end (cx/cy is the moving one)
+  int sel_active;     // 1 if there is an active selection
+  int sticky;         // column vertical movement aims for, in screen columns
   int rowoff, coloff; // vertical/horizontal scroll offsets
   int rows, cols;     // terminal size
-  int dirty;          // unsaved changes
+  int dirty;          // 1 if there is unsaved changes
   int running;        // main loop flag
 } editor;
 

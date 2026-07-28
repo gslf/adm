@@ -63,8 +63,14 @@ int load(buffer *b, const char *filename) {
     return -1;
   }
 
-  const char *line = text;
-  for (const char *p = text; *p; p++) {
+  // Drop a UTF-8 byte order mark, it is not part of the text.
+  const char *start = text;
+  if ((unsigned char)start[0] == 0xEF && (unsigned char)start[1] == 0xBB &&
+      (unsigned char)start[2] == 0xBF)
+    start += 3;
+
+  const char *line = start;
+  for (const char *p = start; *p; p++) {
     if (*p == '\n') {
       size_t len = (size_t)(p - line);
 
