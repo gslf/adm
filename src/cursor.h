@@ -13,6 +13,11 @@ void cursor_right(editor *e);
 void cursor_word_left(editor *e);
 void cursor_word_right(editor *e);
 
+// One screenful up or down, and to the start of the line. Drop the selection.
+void cursor_page_up(editor *e);
+void cursor_page_down(editor *e);
+void cursor_home(editor *e);
+
 // Same movement, extending the selection from the anchor.
 void cursor_select_up(editor *e);
 void cursor_select_down(editor *e);

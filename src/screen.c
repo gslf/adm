@@ -29,6 +29,29 @@ void ab_free(abuf *ab) {
   ab->len = 0;
 }
 
+// How selected text is painted. Deliberately a colour pair and not reverse
+// video: the terminal draws its own cursor by inverting the cell it sits on,
+// so reverse video would cancel out there and that one character would look
+// unselected. It is always the character under the cursor, which on a
+// selection made backwards is the first one of the run, so selecting towards
+// the start of a line left its first character looking untouched.
+// With real colours the cursor still inverts its cell, but the result reads
+// as a caret sitting inside the selection instead of a hole in it.
+#define SELECT_ON "\x1b[44;97m"  // white on blue
+#define SELECT_OFF "\x1b[49;39m" // back to the terminal's own colours
+
+// The two status bars, and the warning that replaces the bottom one while a
+// quit is waiting to be confirmed. Red rather than the usual yellow, because
+// answering it wrongly is the one keystroke in the editor that cannot be
+// taken back.
+#define STATUS_COLOURS "\x1b[30;103m"  // black on bright yellow
+#define WARNING_COLOURS "\x1b[97;41m"  // white on red
+#define QUIT_WARNING "Unsaved changes will be lost - press Ctrl-Q again to quit"
+
+static void append_str(abuf *ab, const char *s) {
+  ab_append(ab, s, (int)strlen(s));
+}
+
 // Bytes of s that fit in `cols` screen columns, cut on a cluster boundary so
 // a multi byte character is never split. Reports the columns actually used.
 static int fit_cols(const char *s, int cols, int *used) {
@@ -78,7 +101,7 @@ void screen_refresh(editor *e) {
   ab_append(&ab, "\x1b[H", 3);    // home
 
   // --- Top status bar (bright yellow, bold logo) ---
-  ab_append(&ab, "\x1b[30;103m", 9);            // black text on bright yellow
+  append_str(&ab, STATUS_COLOURS);
   ab_append(&ab, "\x1b[1m ][adm\x1b[22m", 15);  // bold logo, then bold off
   int logolen = 6;                              // visible width of " ][adm"
 
@@ -122,8 +145,8 @@ void screen_refresh(editor *e) {
 
       // Walk the line one grapheme cluster at a time, tracking the screen
       // column so that wide and zero width characters land where they should.
-      int rev = 0;  // reverse video currently on
-      int col = 0;  // column of the cluster about to be drawn
+      int painted = 0; // selection colours currently on
+      int col = 0;     // column of the cluster about to be drawn
       for (int j = 0; ; ) {
         int inside = (j >= from && j < to);
         int at_end = (j >= len);
@@ -135,9 +158,9 @@ void screen_refresh(editor *e) {
           break; // would spill past the right edge
 
         if (col >= e->coloff || col + w > e->coloff) {
-          if (inside != rev) {
-            ab_append(&ab, inside ? "\x1b[7m" : "\x1b[27m", inside ? 4 : 5);
-            rev = inside;
+          if (inside != painted) {
+            append_str(&ab, inside ? SELECT_ON : SELECT_OFF);
+            painted = inside;
           }
           if (at_end || col < e->coloff)
             ab_append(&ab, " ", 1); // newline marker, or a wide cluster cut by
@@ -155,8 +178,8 @@ void screen_refresh(editor *e) {
           break;
         j = n;
       }
-      if (rev)
-        ab_append(&ab, "\x1b[27m", 5);
+      if (painted)
+        append_str(&ab, SELECT_OFF);
     } else {
       ab_append(&ab, "~", 1);
     }
@@ -164,10 +187,21 @@ void screen_refresh(editor *e) {
   }
 
   // --- Bottom status bar ---
-  ab_append(&ab, "\x1b[30;103m", 9); // black text on bright yellow
+  // A quit waiting to be confirmed takes the whole bar over, in its own
+  // colours: until the user answers it, nothing else down here matters.
   char bot[512];
-  int bn = snprintf(bot, sizeof bot, " %d:%d  lines %d",
-                    e->cy + 1, cursor_col(e) + 1, e->buf.nlines);
+  if (e->quit_pending) {
+    append_str(&ab, WARNING_COLOURS);
+    snprintf(bot, sizeof bot, " %s", QUIT_WARNING);
+  } else {
+    append_str(&ab, STATUS_COLOURS);
+    snprintf(bot, sizeof bot, " %d:%d  lines %d",
+             e->cy + 1, cursor_col(e) + 1, e->buf.nlines);
+  }
+
+  // strlen and not what snprintf returned: that is the length the text would
+  // have had, which on a narrow terminal runs past the end of the buffer.
+  int bn = (int)strlen(bot);
   if (bn > e->cols)
     bn = e->cols;
   ab_append(&ab, bot, bn);

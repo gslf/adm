@@ -19,8 +19,15 @@ enum {
   KEY_CTRL_SHIFT_DOWN  = 0x110007,
   KEY_CTRL_LEFT        = 0x110008,
   KEY_CTRL_RIGHT       = 0x110009,
-  KEY_DELETE           = 0x11000A
+  KEY_DELETE           = 0x11000A,
+  KEY_PGUP             = 0x11000B,
+  KEY_PGDOWN           = 0x11000C,
+  KEY_HOME             = 0x11000D
 };
+
+// Backspace, which terminals send as the ASCII DEL byte rather than as an
+// escape sequence. It is a normal code point, so it lives outside the enum.
+#define KEY_BACKSPACE 127
 
 // Control-key code.
 #define CTRL(k) ((k) & 0x1f)
@@ -38,6 +45,7 @@ typedef struct editor {
   int rowoff, coloff; // vertical/horizontal scroll offsets
   int rows, cols;     // terminal size
   int dirty;          // 1 if there is unsaved changes
+  int quit_pending;   // 1 while a quit is waiting to be confirmed
   int running;        // main loop flag
 } editor;
 

@@ -67,6 +67,41 @@ static void move_right(editor *e) {
   cursor_mark_column(e);
 }
 
+// One screenful of text, the step a page key takes.
+static int page(const editor *e) {
+  int th = e->rows - 2; // two status bars
+  return th > 0 ? th : 1;
+}
+
+static void move_page_up(editor *e) {
+  int n = page(e);
+  e->cy = e->cy > n ? e->cy - n : 0;
+
+  // Scroll with the cursor so it keeps its place on the screen.
+  e->rowoff = e->rowoff > n ? e->rowoff - n : 0;
+  seek_column(e);
+}
+
+static void move_page_down(editor *e) {
+  int n = page(e);
+  int last = e->buf.nlines > 0 ? e->buf.nlines - 1 : 0;
+
+  e->cy += n;
+  if (e->cy > last)
+    e->cy = last;
+
+  e->rowoff += n;
+  if (e->rowoff > last)
+    e->rowoff = last;
+
+  seek_column(e);
+}
+
+static void move_home(editor *e) {
+  e->cx = 0;
+  cursor_mark_column(e);
+}
+
 // A word is a run of letters, digits and underscores. Every byte outside
 // ASCII counts as a word byte too, so that words in other scripts hold
 // together instead of breaking at each accent.
@@ -179,7 +214,17 @@ static void extend(editor *e, command move) {
     e->sely = e->cy;
     e->sel_active = 1;
   }
+
   move(e);
+
+  // The cursor can land back on the anchor, either by shrinking the selection
+  // down to nothing or by never leaving in the first place, which is what
+  // happens against the top or the bottom of the buffer. A selection that
+  // covers no text has to stop counting as one: while it is still active,
+  // backspace and delete believe there is something to remove, do nothing,
+  // and swallow the keystroke while marking the file as modified.
+  if (e->cy == e->sely && e->cx == e->selx)
+    e->sel_active = 0;
 }
 
 void cursor_up(editor *e)         { plain(e, move_up); }
@@ -188,6 +233,9 @@ void cursor_left(editor *e)       { plain(e, move_left); }
 void cursor_right(editor *e)      { plain(e, move_right); }
 void cursor_word_left(editor *e)  { plain(e, move_word_left); }
 void cursor_word_right(editor *e) { plain(e, move_word_right); }
+void cursor_page_up(editor *e)    { plain(e, move_page_up); }
+void cursor_page_down(editor *e)  { plain(e, move_page_down); }
+void cursor_home(editor *e)       { plain(e, move_home); }
 
 void cursor_select_up(editor *e)    { extend(e, move_up); }
 void cursor_select_down(editor *e)  { extend(e, move_down); }

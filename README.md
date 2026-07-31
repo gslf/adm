@@ -29,11 +29,26 @@ adm [file]
 Opens `file` for editing. If it does not exist yet, the buffer starts empty and
 the file is created on save. With no argument you get an empty buffer.
 
-### Keys binindgs
+### Key bindings
 
-| Key           | Action              |
-|---------------|---------------------|
-| Ctrl-S        | Save                |
-| Ctrl-Q        | Quit                |
+| Key                 | Action                       |
+|---------------------|------------------------------|
+| Arrows              | Move the cursor              |
+| Ctrl-Left / Right   | Move by word                 |
+| Ctrl-Shift-Arrows   | Extend the selection         |
+| Home                | Start of the line            |
+| PgUp / PgDn         | One screen up / down         |
+| Backspace / Del     | Delete                       |
+| Ctrl-C              | Copy the selection           |
+| Ctrl-X              | Cut the selection            |
+| Ctrl-V              | Paste                        |
+| Ctrl-S              | Save                         |
+| Ctrl-Q              | Quit                         |
 
 That's it.
+
+The clipboard is the system one. On POSIX it goes through whichever of
+`wl-copy`, `xclip`, `xsel` or `pbcopy` is installed, falling back to the
+OSC 52 terminal escape (which works over ssh); on Windows it is the native
+clipboard. When none of those can be reached the editor still copies and
+pastes within itself.

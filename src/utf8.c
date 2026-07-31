@@ -131,6 +131,12 @@ int utf8_decode(const char *s, int *cp) {
 }
 
 int utf8_encode(int cp, char *out) {
+  // Surrogate halves and anything past the last code point have no encoding.
+  // Rejecting them here keeps the encoder in step with utf8_decode, which
+  // refuses the same sequences on the way in.
+  if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))
+    return 0;
+
   if (cp < 0x80) {
     out[0] = (char)cp;
     return 1;

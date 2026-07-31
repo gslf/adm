@@ -3,6 +3,7 @@
 #include "terminal.h"
 #include "dispatch.h"
 #include "screen.h"
+#include "clipboard.h"
 
 int main(int argc, char *argv[]) {
   editor e;
@@ -16,6 +17,7 @@ int main(int argc, char *argv[]) {
   e.cx = e.cy = e.rowoff = e.coloff = 0;
   e.selx = e.sely = e.sel_active = e.sticky = 0;
   e.dirty = 0;
+  e.quit_pending = 0;
   e.running = 1;
 
   // Raw terminal init
@@ -29,6 +31,7 @@ int main(int argc, char *argv[]) {
   e.cols = ts.cols > 0 ? ts.cols : 80;
 
   // Key bindings and modules dispatch
+  dispatch_register(clipboard_module());
   dispatch_init(&e);
 
   // Main loop

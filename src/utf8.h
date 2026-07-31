@@ -11,7 +11,9 @@
 // file can still be opened, edited and saved without losing anything.
 int utf8_decode(const char *s, int *cp);
 
-// Encode cp into out, which must hold 4 bytes. Returns the bytes written.
+// Encode cp into out, which must hold 4 bytes. Returns the bytes written, or
+// 0 if cp is not a code point that can be encoded (negative, a surrogate half
+// or past U+10FFFF), in which case out is left untouched.
 int utf8_encode(int cp, char *out);
 
 // Terminal columns taken by one code point: 0, 1 or 2.
