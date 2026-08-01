@@ -2,11 +2,8 @@
 
 A minimal terminal text editor that does **one** thing, edit text, and does it well.
 
-## Philosophy
+![adm ScreenShot](res/ss.png)
 
-][adm has a single purpose: editing text. That is the whole scope. Every line of
-code exists to serve that goal, nothing else — no configuration files, no macros,
-no bloat.
 
 - **Cross-platform** — POSIX (Linux, macOS, *BSD) and Windows.
 - **No dependencies** — only the C standard library and the OS terminal API.
@@ -29,7 +26,6 @@ adm [file]
 Opens `file` for editing. If it does not exist yet, the buffer starts empty and
 the file is created on save. With no argument you get an empty buffer.
 
-### Key bindings
 
 | Key                 | Action                       |
 |---------------------|------------------------------|
@@ -50,7 +46,6 @@ To select text press Ctrl-B and move the cursor: the movement keys extend the
 selection until you copy, cut, type over it, or back out with Esc or Ctrl-B
 again. While selection mode is on the bottom bar shows a blue SELECT badge.
 
-That's it.
 
 The clipboard is the system one. On POSIX it goes through whichever of
 `wl-copy`, `xclip`, `xsel` or `pbcopy` is installed, falling back to the
