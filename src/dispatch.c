@@ -164,10 +164,6 @@ void dispatch_init(editor *e) {
   dispatch_bind(KEY_DOWN,  cursor_down);
   dispatch_bind(KEY_LEFT,  cursor_left);
   dispatch_bind(KEY_RIGHT, cursor_right);
-  dispatch_bind(KEY_CTRL_SHIFT_UP,    cursor_select_up);
-  dispatch_bind(KEY_CTRL_SHIFT_DOWN,  cursor_select_down);
-  dispatch_bind(KEY_CTRL_SHIFT_LEFT,  cursor_select_left);
-  dispatch_bind(KEY_CTRL_SHIFT_RIGHT, cursor_select_right);
   dispatch_bind(KEY_CTRL_LEFT,        cursor_word_left);
   dispatch_bind(KEY_CTRL_RIGHT,       cursor_word_right);
   dispatch_bind(KEY_DELETE,           cmd_delete);
@@ -175,6 +171,8 @@ void dispatch_init(editor *e) {
   dispatch_bind(KEY_PGUP,             cursor_page_up);
   dispatch_bind(KEY_PGDOWN,           cursor_page_down);
   dispatch_bind(KEY_HOME,             cursor_home);
+  dispatch_bind(CTRL('b'), cursor_select_toggle);
+  dispatch_bind('\x1b',    selection_clear); // Esc backs out of the selection
   dispatch_bind(CTRL('s'), cmd_save);
   dispatch_bind(CTRL('q'), cmd_quit);
 
@@ -192,8 +190,11 @@ static void edit_key(editor *e, int key) {
   if (key != '\r' && key != '\n' && !text)
     return;
 
-  // Typing over a selection replaces it.
+  // Typing over a selection replaces it, and either way it ends selection
+  // mode: the anchor left behind would silently grab whatever the cursor
+  // walks over next.
   drop_selection(e);
+  selection_clear(e);
 
   // Enter
   if (key == '\r' || key == '\n') {
@@ -338,25 +339,17 @@ static int escape_to_key(char final, const char *par) {
 
   switch (final) {
     case 'A':
-      if (mod == (MOD_CTRL | MOD_SHIFT))
-        return KEY_CTRL_SHIFT_UP;
       return KEY_UP;
 
     case 'B':
-      if (mod == (MOD_CTRL | MOD_SHIFT))
-        return KEY_CTRL_SHIFT_DOWN;
       return KEY_DOWN;
 
     case 'C':
-      if (mod == (MOD_CTRL | MOD_SHIFT))
-        return KEY_CTRL_SHIFT_RIGHT;
       if (mod == MOD_CTRL)
         return KEY_CTRL_RIGHT;
       return KEY_RIGHT;
 
     case 'D':
-      if (mod == (MOD_CTRL | MOD_SHIFT))
-        return KEY_CTRL_SHIFT_LEFT;
       if (mod == MOD_CTRL)
         return KEY_CTRL_LEFT;
       return KEY_LEFT;

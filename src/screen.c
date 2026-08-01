@@ -48,6 +48,12 @@ void ab_free(abuf *ab) {
 #define WARNING_COLOURS "\x1b[97;41m"  // white on red
 #define QUIT_WARNING "Unsaved changes will be lost - press Ctrl-Q again to quit"
 
+// The badge the bottom bar starts with while selection mode is on, painted in
+// the same blue as the selected text so the two read as one thing. Bold, and
+// dropped back to normal weight before the bar's own colours return.
+#define SELECT_BADGE "\x1b[97;44;1m SELECT \x1b[22m"
+#define SELECT_BADGE_COLS 8 // visible width of " SELECT "
+
 static void append_str(abuf *ab, const char *s) {
   ab_append(ab, s, (int)strlen(s));
 }
@@ -190,11 +196,21 @@ void screen_refresh(editor *e) {
   // A quit waiting to be confirmed takes the whole bar over, in its own
   // colours: until the user answers it, nothing else down here matters.
   char bot[512];
+  int used = 0; // visible columns the badge has already taken
   if (e->quit_pending) {
     append_str(&ab, WARNING_COLOURS);
     snprintf(bot, sizeof bot, " %s", QUIT_WARNING);
   } else {
     append_str(&ab, STATUS_COLOURS);
+
+    // Selection mode announces itself first thing on the bar: the mode is
+    // never on without the screen saying so, even before the first move.
+    if (e->sel_mode || e->sel_active) {
+      append_str(&ab, SELECT_BADGE);
+      append_str(&ab, STATUS_COLOURS);
+      used = SELECT_BADGE_COLS;
+    }
+
     snprintf(bot, sizeof bot, " %d:%d  lines %d",
              e->cy + 1, cursor_col(e) + 1, e->buf.nlines);
   }
@@ -202,10 +218,12 @@ void screen_refresh(editor *e) {
   // strlen and not what snprintf returned: that is the length the text would
   // have had, which on a narrow terminal runs past the end of the buffer.
   int bn = (int)strlen(bot);
-  if (bn > e->cols)
-    bn = e->cols;
+  if (bn > e->cols - used)
+    bn = e->cols - used;
+  if (bn < 0)
+    bn = 0;
   ab_append(&ab, bot, bn);
-  for (int i = bn; i < e->cols; i++)
+  for (int i = used + bn; i < e->cols; i++)
     ab_append(&ab, " ", 1);
   ab_append(&ab, "\x1b[m", 3);
 

@@ -3,28 +3,26 @@
 
 #include "dispatch.h"
 
-// Cursor movement in file coordinates. Drops the selection.
+// Cursor movement in file coordinates. In selection mode it extends the
+// selection from the anchor, otherwise it drops the selection.
 void cursor_up(editor *e);
 void cursor_down(editor *e);
 void cursor_left(editor *e);
 void cursor_right(editor *e);
 
-// Movement by whole words. Drops the selection.
+// Movement by whole words.
 void cursor_word_left(editor *e);
 void cursor_word_right(editor *e);
 
-// One screenful up or down, and to the start of the line. Drop the selection.
+// One screenful up or down, and to the start of the line.
 void cursor_page_up(editor *e);
 void cursor_page_down(editor *e);
 void cursor_home(editor *e);
 
-// Same movement, extending the selection from the anchor.
-void cursor_select_up(editor *e);
-void cursor_select_down(editor *e);
-void cursor_select_left(editor *e);
-void cursor_select_right(editor *e);
+// Turn selection mode on, anchored at the cursor, or off again.
+void cursor_select_toggle(editor *e);
 
-// Drop the selection.
+// Leave selection mode and drop the selection.
 void selection_clear(editor *e);
 
 // Remove the selected text and leave the cursor where it started.

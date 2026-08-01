@@ -518,6 +518,10 @@ static void clip_copy(editor *e) {
     return; // nothing selected, or out of memory
 
   clipboard_set(text);
+
+  // Dropping the selection is the visible sign the copy went through, and it
+  // ends selection mode so the next move does not start growing a new one.
+  selection_clear(e);
 }
 
 static void clip_cut(editor *e) {
@@ -550,9 +554,11 @@ static void clip_paste(editor *e) {
     return;
   }
 
-  // Pasting over a selection replaces it.
+  // Pasting over a selection replaces it, and pasting at all ends selection
+  // mode, exactly as typing does.
   if (e->sel_active)
     selection_delete(e);
+  selection_clear(e);
 
   insert_text_at_cursor(e, text);
   free(from_system); // the internal register is not ours to free here

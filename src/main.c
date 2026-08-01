@@ -15,7 +15,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
   e.cx = e.cy = e.rowoff = e.coloff = 0;
-  e.selx = e.sely = e.sel_active = e.sticky = 0;
+  e.selx = e.sely = e.sel_active = e.sel_mode = e.sticky = 0;
   e.dirty = 0;
   e.quit_pending = 0;
   e.running = 1;

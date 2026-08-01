@@ -13,16 +13,12 @@ enum {
   KEY_RIGHT            = 0x110001,
   KEY_UP               = 0x110002,
   KEY_DOWN             = 0x110003,
-  KEY_CTRL_SHIFT_LEFT  = 0x110004,
-  KEY_CTRL_SHIFT_RIGHT = 0x110005,
-  KEY_CTRL_SHIFT_UP    = 0x110006,
-  KEY_CTRL_SHIFT_DOWN  = 0x110007,
-  KEY_CTRL_LEFT        = 0x110008,
-  KEY_CTRL_RIGHT       = 0x110009,
-  KEY_DELETE           = 0x11000A,
-  KEY_PGUP             = 0x11000B,
-  KEY_PGDOWN           = 0x11000C,
-  KEY_HOME             = 0x11000D
+  KEY_CTRL_LEFT        = 0x110004,
+  KEY_CTRL_RIGHT       = 0x110005,
+  KEY_DELETE           = 0x110006,
+  KEY_PGUP             = 0x110007,
+  KEY_PGDOWN           = 0x110008,
+  KEY_HOME             = 0x110009
 };
 
 // Backspace, which terminals send as the ASCII DEL byte rather than as an
@@ -41,6 +37,7 @@ typedef struct editor {
   int cx, cy;         // cursor in file coordinates (column, row)
   int selx, sely;     // selection anchor, the fixed end (cx/cy is the moving one)
   int sel_active;     // 1 if there is an active selection
+  int sel_mode;       // 1 while selection mode is on: movement extends the selection
   int sticky;         // column vertical movement aims for, in screen columns
   int rowoff, coloff; // vertical/horizontal scroll offsets
   int rows, cols;     // terminal size

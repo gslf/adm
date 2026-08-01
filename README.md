@@ -35,7 +35,8 @@ the file is created on save. With no argument you get an empty buffer.
 |---------------------|------------------------------|
 | Arrows              | Move the cursor              |
 | Ctrl-Left / Right   | Move by word                 |
-| Ctrl-Shift-Arrows   | Extend the selection         |
+| Ctrl-B              | Selection mode on / off      |
+| Esc                 | Cancel the selection         |
 | Home                | Start of the line            |
 | PgUp / PgDn         | One screen up / down         |
 | Backspace / Del     | Delete                       |
@@ -44,6 +45,10 @@ the file is created on save. With no argument you get an empty buffer.
 | Ctrl-V              | Paste                        |
 | Ctrl-S              | Save                         |
 | Ctrl-Q              | Quit                         |
+
+To select text press Ctrl-B and move the cursor: the movement keys extend the
+selection until you copy, cut, type over it, or back out with Esc or Ctrl-B
+again. While selection mode is on the bottom bar shows a blue SELECT badge.
 
 That's it.
 
