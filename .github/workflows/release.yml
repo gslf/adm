@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: macos-arm64
+            arch_flags: "-arch arm64"
+          - os: macos-latest
+            target: macos-x86_64
+            arch_flags: "-arch x86_64"
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+          - os: windows-latest
+            target: windows-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        shell: bash
+        run: make CFLAGS="-std=c11 -Wall -Wextra -O2 -D_DEFAULT_SOURCE ${{ matrix.arch_flags }}"
+
+      - name: Package
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          NAME="adm-${VERSION}-${{ matrix.target }}"
+          mkdir -p dist
+          if [ -f adm.exe ]; then
+            cp adm.exe LICENSE README.md dist/
+            cd dist && 7z a "${NAME}.zip" adm.exe LICENSE README.md
+          else
+            strip adm
+            cp adm LICENSE README.md dist/
+            cd dist && tar czf "${NAME}.tar.gz" adm LICENSE README.md
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: adm-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
