@@ -13,11 +13,11 @@
 static int replace(const char *tmp, const char *dst){
 
   #ifdef _WIN32
-    bool move_result  MoveFileExA(tmp, dst, MOVE_FILE_REPLACE_EXISTING);
-    if (move_result)
+    // rename() on Windows refuses to overwrite an existing file, so the
+    // replace has to go through MoveFileEx and its explicit flag.
+    if (MoveFileExA(tmp, dst, MOVEFILE_REPLACE_EXISTING))
       return 0;
-    else
-      return -1;
+    return -1;
 
   #else
     return rename(tmp, dst);
@@ -64,11 +64,12 @@ int file_write(const char *path, const char *data){
   if (name_len >= (int)sizeof tmp)
     return -1;
 
-  FILE *fp = fopen(tmp, "wp");
+  FILE *fp = fopen(tmp, "wb");
   if (!fp) return -1;
 
-  size_t write_len = fwrite(data, 1, len, fp); 
+  size_t write_len = fwrite(data, 1, len, fp);
   if (write_len != len){
+    fclose(fp);
     remove(tmp);
     return -1;
   }
