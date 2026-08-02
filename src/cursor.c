@@ -196,16 +196,18 @@ void selection_delete(editor *e) {
     for (int i = ec - sc; i > 0; i--)
       buffer_delete_char(&e->buf, sr, sc);
   } else {
-    // Cut the tail of the first row and the head of the last one, then fold
-    // every row in between away by joining them onto the first.
+    // Cut the tail of the first row and the head of the last one, drop the
+    // fully selected rows in between, then pull what is left of the last
+    // row up onto the first.
     char *first = buffer_line(&e->buf, sr);
     int flen = first ? (int)strlen(first) : 0;
     for (int i = flen - sc; i > 0; i--)
       buffer_delete_char(&e->buf, sr, sc);
     for (int i = ec; i > 0; i--)
       buffer_delete_char(&e->buf, er, 0);
-    for (int r = er; r > sr; r--)
-      buffer_join_line(&e->buf, sr);
+    for (int r = er - 1; r > sr; r--)
+      buffer_remove_line(&e->buf, r);
+    buffer_join_line(&e->buf, sr);
   }
 
   e->cy = sr;

@@ -318,6 +318,10 @@ static void remove_line(buffer *b, int index) {
   }
 }
 
+void buffer_remove_line(buffer *b, int index) {
+  remove_line(b, index);
+}
+
 int buffer_delete_char(buffer *b, int row, int col) {
   char **slot = line_slot(b, row);
   if (!slot)
