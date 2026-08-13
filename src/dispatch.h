@@ -18,7 +18,10 @@ enum {
   KEY_DELETE           = 0x110006,
   KEY_PGUP             = 0x110007,
   KEY_PGDOWN           = 0x110008,
-  KEY_HOME             = 0x110009
+  KEY_HOME             = 0x110009,
+  KEY_END              = 0x11000A,
+  KEY_CTRL_HOME        = 0x11000B,
+  KEY_CTRL_END         = 0x11000C
 };
 
 // Backspace, which terminals send as the ASCII DEL byte rather than as an

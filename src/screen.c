@@ -211,8 +211,14 @@ void screen_refresh(editor *e) {
       used = SELECT_BADGE_COLS;
     }
 
-    snprintf(bot, sizeof bot, " %d:%d  lines %d",
-             e->cy + 1, cursor_col(e) + 1, e->buf.nlines);
+    // Characters are grapheme clusters, the same thing the cursor steps
+    // over, so what the bar counts is what the user would count by hand.
+    int bl = snprintf(bot, sizeof bot, " %d:%d  lines %d  chars %d",
+                      e->cy + 1, cursor_col(e) + 1, e->buf.nlines,
+                      buffer_char_count(&e->buf));
+    if (e->sel_active && bl > 0 && bl < (int)sizeof bot)
+      snprintf(bot + bl, sizeof bot - bl, "  sel %d",
+               selection_char_count(e));
   }
 
   // strlen and not what snprintf returned: that is the length the text would

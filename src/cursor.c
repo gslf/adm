@@ -102,6 +102,32 @@ static void move_home(editor *e) {
   cursor_mark_column(e);
 }
 
+static void move_end(editor *e) {
+  e->cx = line_len(e, e->cy);
+  cursor_mark_column(e);
+}
+
+static void move_file_start(editor *e) {
+  e->cy = 0;
+  e->cx = 0;
+  cursor_mark_column(e);
+}
+
+static void move_file_end(editor *e) {
+  e->cy = e->buf.nlines > 0 ? e->buf.nlines - 1 : 0;
+  e->cx = line_len(e, e->cy);
+  cursor_mark_column(e);
+}
+
+// The last line of the file that is on the screen right now. The screen does
+// not move, only the cursor drops to the bottom of it, keeping its column.
+static void move_screen_bottom(editor *e) {
+  int last = e->buf.nlines > 0 ? e->buf.nlines - 1 : 0;
+  int bottom = e->rowoff + page(e) - 1;
+  e->cy = bottom < last ? bottom : last;
+  seek_column(e);
+}
+
 // A word is a run of letters, digits and underscores. Every byte outside
 // ASCII counts as a word byte too, so that words in other scripts hold
 // together instead of breaking at each accent.
@@ -216,6 +242,27 @@ void selection_delete(editor *e) {
   cursor_mark_column(e);
 }
 
+int selection_char_count(const editor *e) {
+  int sr, sc, er, ec;
+  if (!selection_range(e, &sr, &sc, &er, &ec))
+    return 0;
+
+  int total = 0;
+  for (int r = sr; r <= er; r++) {
+    const char *line = buffer_line(&e->buf, r);
+    if (!line)
+      continue;
+
+    int from = (r == sr) ? sc : 0;
+    int to = (r == er) ? ec : (int)strlen(line);
+    for (int j = from; j < to; j = grapheme_next(line, j))
+      total++;
+    if (r < er)
+      total++; // the newline the selection runs over
+  }
+  return total;
+}
+
 // Every cursor command goes through here. With selection mode off a move
 // drops the selection; with it on, the anchor stays put and the move extends
 // the selection to wherever the cursor lands.
@@ -244,6 +291,10 @@ void cursor_word_right(editor *e) { do_move(e, move_word_right); }
 void cursor_page_up(editor *e)    { do_move(e, move_page_up); }
 void cursor_page_down(editor *e)  { do_move(e, move_page_down); }
 void cursor_home(editor *e)       { do_move(e, move_home); }
+void cursor_end(editor *e)        { do_move(e, move_end); }
+void cursor_file_start(editor *e) { do_move(e, move_file_start); }
+void cursor_file_end(editor *e)   { do_move(e, move_file_end); }
+void cursor_screen_bottom(editor *e) { do_move(e, move_screen_bottom); }
 
 void cursor_scroll(editor *e) {
   int th = e->rows - 2; // two status bars

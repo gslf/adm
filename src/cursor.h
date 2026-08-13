@@ -14,10 +14,17 @@ void cursor_right(editor *e);
 void cursor_word_left(editor *e);
 void cursor_word_right(editor *e);
 
-// One screenful up or down, and to the start of the line.
+// One screenful up or down, and to the start or end of the line.
 void cursor_page_up(editor *e);
 void cursor_page_down(editor *e);
 void cursor_home(editor *e);
+void cursor_end(editor *e);
+
+// The long jumps: first and last line of the file, and the last line of the
+// file currently visible on the screen.
+void cursor_file_start(editor *e);
+void cursor_file_end(editor *e);
+void cursor_screen_bottom(editor *e);
 
 // Turn selection mode on, anchored at the cursor, or off again.
 void cursor_select_toggle(editor *e);
@@ -31,6 +38,9 @@ void selection_delete(editor *e);
 // Selection bounds sorted in document order, end column exclusive.
 // Returns 0 and leaves the outputs untouched if nothing is selected.
 int selection_range(const editor *e, int *sr, int *sc, int *er, int *ec);
+
+// Characters the selection covers, newlines included; 0 with no selection.
+int selection_char_count(const editor *e);
 
 // Screen column of the cursor, derived from its byte offset.
 int cursor_col(const editor *e);

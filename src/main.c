@@ -4,6 +4,8 @@
 #include "dispatch.h"
 #include "screen.h"
 #include "clipboard.h"
+#include "search.h"
+#include "help.h"
 
 int main(int argc, char *argv[]) {
   editor e;
@@ -32,6 +34,8 @@ int main(int argc, char *argv[]) {
 
   // Key bindings and modules dispatch
   dispatch_register(clipboard_module());
+  dispatch_register(search_module());
+  dispatch_register(help_module());
   dispatch_init(&e);
 
   // Main loop

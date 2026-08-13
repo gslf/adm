@@ -1,5 +1,6 @@
 #include "buffer.h"
 #include "fileio.h"
+#include "utf8.h"
 
 #include <errno.h>
 #include <stdlib.h>
@@ -107,6 +108,21 @@ int load(buffer *b, const char *filename) {
 
   free(text);
   return 0;
+}
+
+int buffer_char_count(const buffer *b) {
+  int total = 0;
+  for (block *k = b->head; k; k = k->next)
+    for (int i = 0; i < k->count; i++) {
+      const char *s = k->lines[i];
+      for (int j = 0; s[j]; j = grapheme_next(s, j))
+        total++;
+    }
+
+  // The newlines between the lines are characters of the text too.
+  if (b->nlines > 1)
+    total += b->nlines - 1;
+  return total;
 }
 
 char *buffer_line(const buffer *b, int index) {

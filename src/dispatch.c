@@ -171,6 +171,15 @@ void dispatch_init(editor *e) {
   dispatch_bind(KEY_PGUP,             cursor_page_up);
   dispatch_bind(KEY_PGDOWN,           cursor_page_down);
   dispatch_bind(KEY_HOME,             cursor_home);
+  dispatch_bind(KEY_END,              cursor_end);
+
+  // The file and screen jumps, on control letters as well because not every
+  // keyboard, macOS laptops first of all, has real Home and End keys.
+  dispatch_bind(KEY_CTRL_HOME, cursor_file_start);
+  dispatch_bind(KEY_CTRL_END,  cursor_file_end);
+  dispatch_bind(CTRL('t'),     cursor_file_start);
+  dispatch_bind(CTRL('e'),     cursor_file_end);
+  dispatch_bind(CTRL('l'),     cursor_screen_bottom);
   dispatch_bind(CTRL('b'), cursor_select_toggle);
   dispatch_bind('\x1b',    selection_clear); // Esc backs out of the selection
   dispatch_bind(CTRL('s'), cmd_save);
@@ -321,13 +330,16 @@ static int escape_modifiers(const char *par) {
 
 // Keys that all end with '~' and tell themselves apart by a leading number.
 // Returns 0 for a number the editor has no key for.
-static int numbered_key(const char *par) {
+static int numbered_key(const char *par, int mod) {
+  int ctrl = (mod == MOD_CTRL);
   switch (atoi(par)) {
-    case 1:  return KEY_HOME;
+    case 1:  return ctrl ? KEY_CTRL_HOME : KEY_HOME;
     case 3:  return KEY_DELETE;
+    case 4:  return ctrl ? KEY_CTRL_END : KEY_END;
     case 5:  return KEY_PGUP;
     case 6:  return KEY_PGDOWN;
-    case 7:  return KEY_HOME; // some terminals send 7 where others send 1
+    case 7:  return ctrl ? KEY_CTRL_HOME : KEY_HOME; // some terminals send
+    case 8:  return ctrl ? KEY_CTRL_END : KEY_END;   // 7/8 where others 1/4
     default: return 0;
   }
 }
@@ -355,10 +367,17 @@ static int escape_to_key(char final, const char *par) {
       return KEY_LEFT;
 
     case 'H':
+      if (mod == MOD_CTRL)
+        return KEY_CTRL_HOME;
       return KEY_HOME;
 
+    case 'F':
+      if (mod == MOD_CTRL)
+        return KEY_CTRL_END;
+      return KEY_END;
+
     case '~':
-      return numbered_key(par);
+      return numbered_key(par, mod);
 
     default:
       return 0;

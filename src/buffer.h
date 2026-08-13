@@ -18,6 +18,7 @@ typedef struct {
 void buffer_init(buffer *b);
 int load(buffer *b, const char *filename);
 char *buffer_line(const buffer *b, int index);
+int buffer_char_count(const buffer *b); // characters, newlines included
 int buffer_insert_char(buffer *b, int row, int col, char c);
 int buffer_insert_newline(buffer *b, int row, int col);
 int buffer_delete_char(buffer *b, int row, int col);
