@@ -155,7 +155,7 @@ int main(int argc, char **argv) {
   abuf ab = {0};
   dispatch_draw(&e, &ab);
   ab_append(&ab, "\0", 1);
-  assert(!strncmp(ab.b, "\x1b[6;15H", 7)); // Centered 52 x 13 box in 80 x 24.
+  assert(!strncmp(ab.b, "\x1b[6;15H", 7)); // Centered 52 x 14 box in 80 x 24.
   assert(strstr(ab.b, "Save") && strstr(ab.b, "Quit"));
   assert(strstr(ab.b, "Go to line") && strstr(ab.b, "Last visible line"));
   assert(strstr(ab.b, "C-s - Save")); // No brackets without a direct binding.

@@ -3,6 +3,9 @@
 
 #include "layout.h"
 #include "file_manager.h"
+#include "sidebar.h"
+#include "git_panel.h"
+#include "documents.h"
 
 struct editor;
 typedef void (*editor_action)(struct editor *e);
@@ -12,6 +15,10 @@ typedef struct editor {
   workspace windows;
   view *view;
   file_manager files;
+  sidebar sidebar;
+  git_panel git;
+  document_request open_request;
+  unsigned long next_view_revision;
   int rows, cols;
   editor_action confirmation;
   editor_action confirmation_cancel;

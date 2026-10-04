@@ -6,12 +6,12 @@ A small terminal text editor for POSIX and Windows, built with C11.
 
 ## Overview
 
-- **Emacs controls:** direct movement and editing shortcuts, plus a centered **C-x Command Center** with available commands and direct aliases. Opposite actions share a row; a blank row separates standard and contextual commands.
-- **Split panes:** up to **four panes total**, combining horizontal and vertical splits, with navigation and resizing. Views of the same buffer share edits but keep independent cursors, selections and scrolling.
-- **Tree file manager:** a left sidebar with separate visibility and keyboard focus controls. It opens files in the selected pane and does not count as a split.
-- **Git panel:** staged changes, working-tree changes and conflicts, with coloured diffs, staging, commits, pull/push, branch checkout and merge. It replaces the file tree in the same sidebar.
-- **Buffer lifecycle:** only documents displayed in panes stay open. Reopening a visible file reuses its buffer, including unsaved edits.
-- **Editing tools:** Unicode support, selections, incremental regex search, go-to-line, system clipboard with fallback, and file/selection statistics in the status bar.
+- **Emacs controls:** direct editing shortcuts and a centered **C-x Command Center** with aligned, contextual commands and direct aliases.
+- **Split panes:** up to **four panes**, with horizontal/vertical splits, navigation and resizing. Shared buffers keep independent cursors and scrolling.
+- **Shared sidebar:** a tree file explorer or Git panel, targeting the selected pane without counting as a split.
+- **Git basics:** staged/unstaged changes, conflicts, highlighted diffs, staging, commits, pull/push, checkout and merge.
+- **Visible buffers only:** closing the last view releases its buffer; unsaved changes require confirmation.
+- **Editing tools:** Unicode, selections, regex search, go-to-line, clipboard and file statistics.
 
 ## Build and run
 
@@ -21,10 +21,10 @@ make
 make test
 ```
 
-Requires a C11 compiler; Git features require Git 2.23 or newer. Tests require
-Python 3 and Git, and use temporary repositories and local remotes. On POSIX they cover the
-actual terminal UI and resizing. A missing file starts empty and is created on
-save; omitting the argument opens an unnamed buffer. Clean with `make clean`.
+Requires a C11 compiler and Git 2.23+ for Git features. Tests require Python 3
+and Git, using temporary repositories and local remotes; POSIX tests also cover
+the terminal UI. Missing files start empty and are created on save. Without an
+argument, adm opens an unnamed buffer. Clean with `make clean`.
 
 ## Controls
 
@@ -50,14 +50,19 @@ save; omitting the argument opens an unnamed buffer. Clean with `make clean`.
 | C-x } / C-x { | Grow / shrink pane width |
 | C-x 0 / C-x 1 | Close current pane / keep only current pane |
 | C-x t | Toggle file manager |
-| C-x v | Toggle Git panel; opening it moves focus to the sidebar |
-| C-x f | Switch focus between sidebar and editor; reopen the last panel, or the file tree by default |
+| C-x v | Toggle Git panel; focus it when opening |
+| C-x f | Switch focus between sidebar and editor |
 
 Terminal navigation keys remain available. Press **C-x** and a displayed suffix
 to run a command; C-g / Esc cancels. Contextual commands appear when available,
 and Up/Down or PgUp/PgDn scroll a menu that exceeds the terminal height.
 
 ## Files and panes
+
+The sidebar shows either the file explorer or Git, never both. **C-x f** focuses
+the current panel; if closed, it reopens the last used panel, defaulting to the
+file explorer. **C-x v** opens and focuses Git. Sidebar focus preserves the
+selected editor pane.
 
 The tree starts in the directory where adm was launched. Use arrows or C-p/n/b/f
 to navigate, expand and collapse folders. Enter toggles folders; opening a file
@@ -95,5 +100,5 @@ the resolved files, then commit. Remotes and credentials use your Git configurat
 Documents own shared text; views own cursor and scroll state. Split layout, tree
 model, file-manager controls and rendering are separate modules. The command
 registry supplies menu labels, aliases and visibility rules. A single sidebar
-state makes file/Git panels mutually exclusive; Git status parsing, process
-execution, controls and rendering live in separate modules.
+state manages panel visibility, focus and restoration. Git status parsing,
+process execution, diff classification, controls and rendering are separate modules.

@@ -44,7 +44,10 @@ static void quit_now(editor *e) {
 }
 
 static void cmd_quit(editor *e) {
-  if (layout_has_unsaved(e))
+  if (e->git.action != GIT_IDLE)
+    dispatch_confirm(e, quit_now, layout_has_unsaved(e) ?
+                     "Quit: discard edits and stop Git?" : "Quit and stop Git operation?");
+  else if (layout_has_unsaved(e))
     dispatch_confirm(e, quit_now, "Quit without saving?");
   else
     quit_now(e);
@@ -64,7 +67,7 @@ void dispatch_confirm_with_cancel(editor *e, command action, command cancel,
 
 // Command - SAVE
 static void cmd_save(editor *e) {
-  if (!e->view->doc->filename)
+  if (!e->view->doc->filename || !documents_editable(e))
     return; 
 
   // Serialize the focused document.
@@ -87,8 +90,11 @@ static void cmd_save(editor *e) {
     }
   text[pos] = '\0';
 
-  if (file_write(e->view->doc->filename, text) == 0)
+  if (file_write(e->view->doc->filename, text) == 0) {
     e->view->doc->dirty = 0;
+    if (e->sidebar.kind == SIDEBAR_GIT)
+      git_panel_refresh(e);
+  }
 
   free(text);
 }
@@ -107,6 +113,8 @@ static int drop_selection(editor *e) {
 
 // Command - DELETE forward
 static void cmd_delete(editor *e) {
+  if (!documents_editable(e))
+    return;
   // Delete a selection
   if (drop_selection(e))
     return;
@@ -134,6 +142,8 @@ static void cmd_delete(editor *e) {
 
 // Command - DELETE backward
 static void cmd_backspace(editor *e) {
+  if (!documents_editable(e))
+    return;
   // Delete a selection
   if (drop_selection(e))
     return;
@@ -255,8 +265,10 @@ void dispatch_init(editor *e) {
   e->confirmation = NULL;
   e->confirmation_cancel = NULL;
   e->confirmation_prompt = NULL;
-  layout_init(e);
+  e->sidebar = (sidebar){0};
   file_manager_init(e);
+  git_panel_init(e);
+  layout_init(e);
   // Built-in key bindings.
   dispatch_bind(KEY_UP,    cursor_up);
   dispatch_bind(KEY_DOWN,  cursor_down);
@@ -302,10 +314,14 @@ void dispatch_init(editor *e) {
       mods[i]->init(e);
   layout_bindings();
   file_manager_bindings();
+  git_panel_bindings();
+  sidebar_bindings();
 }
 
 // Default text input
 static void edit_key(editor *e, int key) {
+  if (!documents_editable(e))
+    return;
   int text = (key >= 32 && key < KEY_SPECIAL && key != KEY_BACKSPACE);
 
   // Not an editing key
@@ -384,15 +400,20 @@ void dispatch_key(editor *e, int key) {
     e->prefix_active = 0;
     if (cmd) {
       if (!binding->preserve_focus)
-        e->files.focused = 0;
+        e->sidebar.focused = 0;
       cmd(e);
     } else if (key != CTRL('g') && key != '\x1b')
       e->prefix_active = 1; // unknown suffix: keep valid choices visible
     return;
   }
 
-  if (e->files.focused && key != CTRL('x')) {
-    file_manager_key(e, key);
+  if (e->sidebar.kind == SIDEBAR_GIT && git_panel_prompt(e)) {
+    git_panel_key(e, key);
+    return;
+  }
+
+  if (e->sidebar.focused && key != CTRL('x')) {
+    sidebar_key(e, key);
     return;
   }
 
@@ -488,7 +509,13 @@ void dispatch_shutdown(editor *e) {
     if (mods[i]->shutdown)
       mods[i]->shutdown(e);
   file_manager_shutdown(e);
+  git_panel_shutdown(e);
+  documents_shutdown(e);
   layout_shutdown(e);
+}
+
+void dispatch_tick(editor *e) {
+  git_panel_tick(e);
 }
 
 // Modifier keys held down together with a special key. The terminal reports

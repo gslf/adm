@@ -6,13 +6,12 @@
 
 typedef struct file_manager {
   file_tree tree;
-  int visible, focused;
-  char *pending_path;
 } file_manager;
 
 struct editor;
 void file_manager_init(struct editor *e);
 void file_manager_shutdown(struct editor *e);
+void file_manager_refresh(struct editor *e);
 void file_manager_key(struct editor *e, int key);
 rect file_manager_area(const struct editor *e);
 void file_manager_bindings(void);

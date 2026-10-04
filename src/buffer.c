@@ -72,6 +72,13 @@ int load(buffer *b, const char *filename) {
     return -1;
   }
 
+  int result = buffer_load_text(b, text);
+  free(text);
+  return result;
+}
+
+int buffer_load_text(buffer *b, const char *text) {
+  buffer_init(b);
   // Drop a UTF-8 byte order mark, it is not part of the text.
   const char *start = text;
   if ((unsigned char)start[0] == 0xEF && (unsigned char)start[1] == 0xBB &&
@@ -89,7 +96,6 @@ int load(buffer *b, const char *filename) {
 
       // Push a new line
       if (push_line(b, line, len) == -1) {
-        free(text);
         buffer_free(b);
         return -1;
       }
@@ -108,13 +114,11 @@ int load(buffer *b, const char *filename) {
       len--;
 
     if (push_line(b, line, len) == -1) {
-      free(text);
       buffer_free(b);
       return -1;
     }
   }
 
-  free(text);
   return 0;
 }
 

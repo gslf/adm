@@ -5,6 +5,12 @@
 #include <string.h>
 #ifdef _WIN32
 #include <direct.h>
+static char *normalize(char *path) {
+  for (char *p = path; p && *p; p++)
+    if (*p == '\\')
+      *p = '/';
+  return path;
+}
 #else
 #include <unistd.h>
 #endif
@@ -20,7 +26,7 @@ char *path_join(const char *directory, const char *name) {
 
 char *path_absolute(const char *path) {
 #ifdef _WIN32
-  return _fullpath(NULL, path, 0);
+  return normalize(_fullpath(NULL, path, 0));
 #else
   return realpath(path, NULL);
 #endif
@@ -28,7 +34,7 @@ char *path_absolute(const char *path) {
 
 char *path_current_directory(void) {
 #ifdef _WIN32
-  return _getcwd(NULL, 0);
+  return normalize(_getcwd(NULL, 0));
 #else
   return getcwd(NULL, 0);
 #endif

@@ -61,9 +61,9 @@ static void arrange_node(workspace *w, int index, rect area) {
 void layout_arrange(editor *e) {
   workspace *w = &e->windows;
   rect area = {0, 1, max(e->cols, 0), max(e->rows - 2, 0)};
-  rect sidebar = file_manager_area(e);
+  rect sidebar = sidebar_area(e);
   if (sidebar.width == 0)
-    e->files.focused = 0;
+    e->sidebar.focused = 0;
   if (sidebar.width > 0) {
     area.x = sidebar.width + 1;
     area.width -= area.x;
@@ -136,7 +136,10 @@ static void reset_layout(editor *e, view initial) {
 void layout_set_document(editor *e, document *doc) {
   if (!doc)
     return;
+  int changed = e->view->doc != doc;
   view_bind_document(e->view, doc);
+  if (changed)
+    e->view->revision = ++e->next_view_revision;
   doc->buf.on_edit = buffer_edited;
   doc->buf.edit_context = e;
 }
@@ -183,6 +186,7 @@ int layout_split(editor *e, layout_kind kind) {
   int index = leaf(w, w->active);
   layout_node *n = &w->nodes[index];
   w->panes[pane] = *e->view;
+  w->panes[pane].revision = ++e->next_view_revision;
   document_retain(w->panes[pane].doc);
   w->panes[pane].sel_active = w->panes[pane].sel_mode = 0;
   for (int i = 0; i < 2; i++)

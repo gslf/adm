@@ -7,6 +7,33 @@
 #include <string.h>
 #include <sys/stat.h>
 
+const char *document_name(const document *doc) {
+  return doc->label ? doc->label : doc->filename ? doc->filename : "[No Name]";
+}
+
+document *document_preview(const char *title, const char *text) {
+  document *doc = calloc(1, sizeof *doc);
+  if (!doc)
+    return NULL;
+  doc->label = malloc(strlen(title) + 1);
+  if (!doc->label || buffer_load_text(&doc->buf, text) < 0) {
+    buffer_free(&doc->buf);
+    free(doc->label);
+    free(doc);
+    return NULL;
+  }
+  strcpy(doc->label, title);
+  doc->diff_lines = diff_classify(&doc->buf);
+  if (!doc->diff_lines) {
+    buffer_free(&doc->buf);
+    free(doc->label);
+    free(doc);
+    return NULL;
+  }
+  doc->allocated = doc->readonly = 1;
+  return doc;
+}
+
 document *document_open(const char *path) {
   struct stat info;
   if (stat(path, &info) < 0)
@@ -62,8 +89,11 @@ void document_release(document *doc) {
   if (--doc->views > 0)
     return;
   buffer_free(&doc->buf);
+  free(doc->diff_lines);
+  doc->diff_lines = NULL;
   if (doc->allocated) {
     free((char *)doc->filename);
+    free(doc->label);
     free(doc);
     return;
   }

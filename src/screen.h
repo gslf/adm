@@ -11,6 +11,10 @@ typedef struct abuf {
 
 void ab_append(abuf *ab, const char *s, int len);
 void ab_free(abuf *ab);
+void screen_position(abuf *ab, int x, int y);
+void screen_repeat(abuf *ab, char c, int count);
+void screen_fill(abuf *ab, rect area, char c);
+int screen_text(abuf *ab, const char *text, int width);
 
 // Width of the line-number column (number plus a space).
 int screen_gutter(const view *v);

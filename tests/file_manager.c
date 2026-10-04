@@ -16,7 +16,7 @@ static void prefix(editor *e, int key) {
 }
 
 static void select_entry(editor *e, const char *name) {
-  if (!e->files.focused)
+  if (!e->sidebar.focused)
     prefix(e, 'f');
   file_tree *tree = &e->files.tree;
   int target = -1;
@@ -25,7 +25,7 @@ static void select_entry(editor *e, const char *name) {
       target = i;
       break;
     }
-  assert(target >= 0 && e->files.focused);
+  assert(target >= 0 && e->sidebar.focused);
   while (tree->selected != target)
     dispatch_key(e, tree->selected < target ? CTRL('n') : CTRL('p'));
 }
@@ -43,11 +43,14 @@ int main(int argc, char **argv) {
   dispatch_register(search_module());
   dispatch_init(&e);
   view *first = e.view;
-  assert(!e.files.visible && !e.files.focused && e.windows.count == 1);
+  assert(e.sidebar.kind != SIDEBAR_FILES && !e.sidebar.focused && e.windows.count == 1);
   assert(dispatch_prefix_find(&e, 't') && dispatch_prefix_find(&e, 'f'));
   assert(!dispatch_prefix_find(&e, '^') && !dispatch_prefix_find(&e, '-'));
-  prefix(&e, 't');
-  assert(e.files.visible && !e.files.focused && e.view == first);
+  prefix(&e, 'f');
+  assert(e.sidebar.kind == SIDEBAR_FILES && e.sidebar.focused && e.view == first);
+  assert(e.sidebar.last == SIDEBAR_FILES && e.windows.active == 0);
+  prefix(&e, 'f');
+  assert(e.sidebar.kind == SIDEBAR_FILES && !e.sidebar.focused && e.view == first);
   assert(e.view->area.x == file_manager_area(&e).width + 1);
   file_tree *tree = &e.files.tree;
   assert(tree->entries[0].directory && tree->entries[0].expanded);
@@ -81,7 +84,7 @@ int main(int argc, char **argv) {
   file_tree_scroll(tree, 3);
   assert(tree->selected == 0 && tree->offset == 0);
   prefix(&e, 'f');
-  assert(!e.files.focused && e.files.visible && e.view == first);
+  assert(!e.sidebar.focused && e.sidebar.kind == SIDEBAR_FILES && e.view == first);
 
   // File-manager focus is independent of the pane targeted by open and split commands.
   prefix(&e, '3');
@@ -89,7 +92,7 @@ int main(int argc, char **argv) {
   view *target = e.view;
   int active = e.windows.active;
   open_entry(&e, "beta.txt");
-  assert(!e.files.focused && e.view == target && e.windows.active == active);
+  assert(!e.sidebar.focused && e.view == target && e.windows.active == active);
   assert(e.document.views == 1 && target->doc != &e.document);
   document *beta = target->doc;
   assert(beta->views == 1 && !strcmp(buffer_line(&beta->buf, 0), "beta"));
@@ -111,43 +114,43 @@ int main(int argc, char **argv) {
   assert(e.view->doc == beta && !e.confirmation && beta->views == 1);
 #endif
   open_entry(&e, "gamma.txt");
-  assert(e.confirmation && e.files.pending_path && e.view->doc == beta);
+  assert(e.confirmation && e.open_request.path && e.view->doc == beta);
   dispatch_key(&e, KEY_NONE);
   assert(e.confirmation);
   dispatch_key(&e, 'n');
-  assert(!e.confirmation && !e.files.pending_path && e.view->doc == beta);
-  assert(e.files.focused && beta->dirty && beta->views == 1);
+  assert(!e.confirmation && !e.open_request.path && e.view->doc == beta);
+  assert(e.sidebar.focused && beta->dirty && beta->views == 1);
   open_entry(&e, "gamma.txt");
   dispatch_key(&e, 'y');
-  assert(!e.confirmation && !e.files.pending_path && !e.files.focused);
+  assert(!e.confirmation && !e.open_request.path && !e.sidebar.focused);
   document *gamma = target->doc;
   assert(gamma != alpha && gamma->views == 1);
   assert(!strcmp(buffer_line(&gamma->buf, 0), "gamma"));
 
   open_entry(&e, "nul.bin");
-  assert(e.view->doc == gamma && !e.confirmation && e.files.focused && tree->error[0]);
-  assert(!e.files.pending_path);
+  assert(e.view->doc == gamma && !e.confirmation && e.sidebar.focused && tree->error[0]);
+  assert(!e.open_request.path);
 #ifndef _WIN32
   open_entry(&e, "pipe");
   assert(e.view->doc == gamma && tree->error[0]); // Non-regular files cannot block the UI.
 #endif
   open_entry(&e, "gone.txt");
-  assert(e.view->doc != gamma && !e.files.focused);
+  assert(e.view->doc != gamma && !e.sidebar.focused);
   document *gone = e.view->doc;
   assert(remove("gone.txt") == 0);
   open_entry(&e, "gone.txt");
-  assert(e.view->doc == gone && tree->error[0] && e.files.focused);
+  assert(e.view->doc == gone && tree->error[0] && e.sidebar.focused);
   dispatch_key(&e, CTRL('g'));
-  assert(!e.files.focused);
+  assert(!e.sidebar.focused);
 
   select_entry(&e, "folder");
   dispatch_key(&e, KEY_RIGHT);
   open_entry(&e, "nested.txt");
   assert(!strcmp(buffer_line(&e.view->doc->buf, 0), "nested"));
   prefix(&e, 'f');
-  assert(e.files.focused);
+  assert(e.sidebar.focused);
   prefix(&e, 'g');
-  assert(!e.files.focused); // Editor commands return focus before starting a prompt.
+  assert(!e.sidebar.focused); // Editor commands return focus before starting a prompt.
   dispatch_key(&e, '1');
   dispatch_key(&e, '\r');
   dispatch_key(&e, '!');
@@ -162,21 +165,22 @@ int main(int argc, char **argv) {
   dispatch_key(&e, '@');
   assert(alpha->dirty && nested->dirty);
   prefix(&e, 'f');
-  assert(e.files.focused && e.windows.count == MAX_PANES);
+  assert(e.sidebar.focused && e.windows.count == MAX_PANES);
   int selected_pane = e.windows.active;
   prefix(&e, 't');
-  assert(!e.files.visible && !e.files.focused && e.windows.active == selected_pane);
+  assert(e.sidebar.kind != SIDEBAR_FILES && !e.sidebar.focused && e.windows.active == selected_pane);
+  assert(e.sidebar.last == SIDEBAR_FILES);
   prefix(&e, 'f');
-  assert(e.files.visible && e.files.focused && e.windows.active == selected_pane);
+  assert(e.sidebar.kind == SIDEBAR_FILES && e.sidebar.focused && e.windows.active == selected_pane);
   prefix(&e, 'o');
-  assert(!e.files.focused && e.windows.active != selected_pane);
+  assert(!e.sidebar.focused && e.windows.active != selected_pane);
   prefix(&e, 'f');
   e.cols = 20;
   layout_arrange(&e);
-  assert(!file_manager_area(&e).width && !e.files.focused && e.windows.count == MAX_PANES);
+  assert(!file_manager_area(&e).width && !e.sidebar.focused && e.windows.count == MAX_PANES);
   e.cols = 80;
   layout_arrange(&e);
-  assert(file_manager_area(&e).width && e.files.visible);
+  assert(file_manager_area(&e).width && e.sidebar.kind == SIDEBAR_FILES);
 
   // Exit inspects every distinct visible document, including an inactive dirty one.
   prefix(&e, CTRL('c'));
@@ -187,6 +191,6 @@ int main(int argc, char **argv) {
   dispatch_key(&e, 'y');
   assert(!e.running);
   dispatch_shutdown(&e);
-  assert(!e.files.pending_path && !e.files.tree.entries && !e.view);
+  assert(!e.open_request.path && !e.files.tree.entries && !e.view);
   return 0;
 }

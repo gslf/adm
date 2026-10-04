@@ -525,6 +525,8 @@ static void clip_copy(editor *e) {
 }
 
 static void clip_cut(editor *e) {
+  if (!documents_editable(e))
+    return;
   char *text = selection_text(e);
   if (text == NULL)
     return;
@@ -537,6 +539,8 @@ static void clip_cut(editor *e) {
 }
 
 static void clip_paste(editor *e) {
+  if (!documents_editable(e))
+    return;
   // The system clipboard wins, the internal register is the fallback. An
   // empty string means the helper ran but had nothing to hand over, so it
   // counts as no answer at all.

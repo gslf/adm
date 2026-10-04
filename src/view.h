@@ -9,6 +9,7 @@ typedef struct rect {
 
 // Each pane retains its document; shared text survives until its last view closes.
 typedef struct view {
+  unsigned long revision;
   document *doc;
   int cx, cy;
   int selx, sely, sel_active, sel_mode;

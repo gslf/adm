@@ -82,6 +82,7 @@ void dispatch_init(editor *e);             // set up default bindings, init modu
 void dispatch_key(editor *e, int key);     // on_key chain, then bound command
 void dispatch_draw(editor *e, struct abuf *ab); // on_draw chain
 void dispatch_change(editor *e);           // on_change chain
+void dispatch_tick(editor *e);
 void dispatch_shutdown(editor *e);         // call shutdown of every module
 void dispatch_confirm(editor *e, command action, const char *prompt);
 void dispatch_confirm_with_cancel(editor *e, command action, command cancel,

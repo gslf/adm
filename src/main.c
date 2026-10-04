@@ -42,6 +42,7 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    dispatch_tick(&e);
     screen_refresh(&e);
 
     int k = read_key();
