@@ -58,3 +58,4 @@ src/adm
 src/*.o
 .claude/
 /adm
+/tests/__pycache__/

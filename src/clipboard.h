@@ -6,7 +6,7 @@
 // Copy, cut and paste of the selection through the system clipboard.
 //
 // Register the module before dispatch_init() and it binds itself to
-// Ctrl-C (copy), Ctrl-X (cut) and Ctrl-V (paste).
+// M-w (copy), C-w (cut) and C-y (paste).
 module *clipboard_module(void);
 
 #endif

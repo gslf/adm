@@ -7,3 +7,7 @@ adm: $(SRC) $(HDR)
 
 clean:
 	$(RM) adm
+
+.PHONY: clean test
+test:
+	CC="$(CC)" CFLAGS="$(CFLAGS)" python3 tests/run_controls.py

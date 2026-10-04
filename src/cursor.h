@@ -44,6 +44,9 @@ int selection_char_count(const editor *e);
 
 // Screen column of the cursor, derived from its byte offset.
 int cursor_col(const editor *e);
+int view_cursor_col(const view *v);
+int view_selection_range(const view *v, int *sr, int *sc, int *er, int *ec);
+void cursor_scroll_view(view *v, int width, int height);
 
 // Take the current column as the target for later vertical movement. Call it
 // after any edit that moves the cursor sideways.

@@ -1,14 +1,14 @@
 // Incremental search with a small regular expression engine, and the
 // go-to-line prompt that shares its bar.
 //
-// Ctrl-F opens a prompt on the bottom status bar. The search is incremental:
+// C-s opens a prompt on the bottom status bar. The search is incremental:
 // each keystroke runs it again from where the cursor was, and the first match
 // is shown highlighted. Enter closes the prompt and leaves the cursor on the
 // match, Esc closes it and puts everything back, and the arrow keys walk the
-// matches: Down (or Ctrl-F again) to the next one, Up to the previous one,
+// matches: Down (or C-s again) to the next one, Up to the previous one,
 // wrapping around the ends of the file.
 //
-// Ctrl-G opens the same prompt as GOTO: type a line number and the view
+// C-x g opens the same prompt as GOTO: type a line number and the view
 // follows it as it is typed, Enter stays there, Esc goes back. A number past
 // the end of the file stops at the last line.
 //
@@ -332,13 +332,13 @@ static int line_rfind(const char *pat, const char *line, int before,
 // buffer and giving up after coming full circle.
 static int find_forward(editor *e, const char *pat, int from_y, int from_x,
                         int *my, int *mx, int *mlen) {
-  int n = e->buf.nlines;
+  int n = e->view->doc->buf.nlines;
   if (n <= 0)
     return 0;
 
   for (int i = 0; i <= n; i++) {
     int y = (from_y + i) % n;
-    const char *line = buffer_line(&e->buf, y);
+    const char *line = buffer_line(&e->view->doc->buf, y);
     if (!line)
       continue;
 
@@ -357,13 +357,13 @@ static int find_forward(editor *e, const char *pat, int from_y, int from_x,
 // The same thing backwards: the last match before (before_y, before_x).
 static int find_backward(editor *e, const char *pat, int before_y,
                          int before_x, int *my, int *mx, int *mlen) {
-  int n = e->buf.nlines;
+  int n = e->view->doc->buf.nlines;
   if (n <= 0)
     return 0;
 
   for (int i = 0; i <= n; i++) {
     int y = ((before_y - i) % n + n) % n;
-    const char *line = buffer_line(&e->buf, y);
+    const char *line = buffer_line(&e->view->doc->buf, y);
     if (!line)
       continue;
 
@@ -404,23 +404,23 @@ static struct {
 // the selection: the anchor sits at the end of the match and the cursor at
 // its start, which is also where the scrolling brings into view.
 static void show_match(editor *e) {
-  e->cy = S.my;
-  e->cx = S.mx;
-  e->sely = S.my;
-  e->selx = S.mx + S.mlen;
-  e->sel_active = (S.mlen > 0); // a '^' or '$' match has no width to paint
-  e->sel_mode = 0;
+  e->view->cy = S.my;
+  e->view->cx = S.mx;
+  e->view->sely = S.my;
+  e->view->selx = S.mx + S.mlen;
+  e->view->sel_active = (S.mlen > 0); // a '^' or '$' match has no width to paint
+  e->view->sel_mode = 0;
   cursor_mark_column(e);
 }
 
 // Put the view back the way it was when the prompt opened.
 static void restore_view(editor *e) {
-  e->cy = S.oy;
-  e->cx = S.ox;
-  e->rowoff = S.orowoff;
-  e->coloff = S.ocoloff;
-  e->sticky = S.osticky;
-  e->sel_active = 0;
+  e->view->cy = S.oy;
+  e->view->cx = S.ox;
+  e->view->rowoff = S.orowoff;
+  e->view->coloff = S.ocoloff;
+  e->view->sticky = S.osticky;
+  e->view->sel_active = 0;
 }
 
 // Run the search again from the position the prompt opened at. Called after
@@ -448,12 +448,12 @@ static void search_next(editor *e) {
   // Start one character past the start of the current match, not past its
   // end, so matches that overlap it are still found.
   int y = S.my, x = 0;
-  const char *line = buffer_line(&e->buf, S.my);
+  const char *line = buffer_line(&e->view->doc->buf, S.my);
   if (line && line[S.mx] != '\0') {
     int cp;
     x = S.mx + utf8_decode(line + S.mx, &cp);
   } else {
-    y = (e->buf.nlines > 0) ? (S.my + 1) % e->buf.nlines : 0;
+    y = (e->view->doc->buf.nlines > 0) ? (S.my + 1) % e->view->doc->buf.nlines : 0;
   }
 
   if (find_forward(e, S.query, y, x, &S.my, &S.mx, &S.mlen))
@@ -476,15 +476,15 @@ static void goto_update(editor *e) {
     return;
   }
 
-  long last = (e->buf.nlines > 0) ? e->buf.nlines - 1 : 0;
+  long last = (e->view->doc->buf.nlines > 0) ? e->view->doc->buf.nlines - 1 : 0;
   long y = strtol(S.query, NULL, 10) - 1;
   if (y > last)
     y = last;
   if (y < 0)
     y = 0;
 
-  e->cy = (int)y;
-  e->cx = 0;
+  e->view->cy = (int)y;
+  e->view->cx = 0;
   cursor_mark_column(e);
 }
 
@@ -504,11 +504,11 @@ static void prompt_open(editor *e, int goto_mode) {
   S.valid = 1;
   S.found = 0;
 
-  S.oy = e->cy;
-  S.ox = e->cx;
-  S.orowoff = e->rowoff;
-  S.ocoloff = e->coloff;
-  S.osticky = e->sticky;
+  S.oy = e->view->cy;
+  S.ox = e->view->cx;
+  S.orowoff = e->view->rowoff;
+  S.ocoloff = e->view->coloff;
+  S.osticky = e->view->sticky;
 
   // Whatever was selected is let go: from here until the prompt closes the
   // selection machinery is borrowed to show matches.
@@ -527,8 +527,8 @@ static void goto_begin(editor *e) {
 
 static void search_close(editor *e, int accept) {
   S.active = 0;
-  e->sel_active = 0;
-  e->sel_mode = 0;
+  e->view->sel_active = 0;
+  e->view->sel_mode = 0;
 
   // On Enter the cursor stays on the match, where show_match left it; only
   // Esc walks everything back.
@@ -565,6 +565,7 @@ static void query_backspace(editor *e) {
 static int goto_on_key(editor *e, int key) {
   switch (key) {
     case '\x1b':
+    case CTRL('g'):
       search_close(e, 0);
       return 1;
 
@@ -595,6 +596,7 @@ static int search_on_key(editor *e, int key) {
 
   switch (key) {
     case '\x1b':
+    case CTRL('g'):
       search_close(e, 0);
       return 1;
 
@@ -609,11 +611,12 @@ static int search_on_key(editor *e, int key) {
       return 1;
 
     case KEY_DOWN:
-    case CTRL('f'):
+    case CTRL('s'):
       search_next(e);
       return 1;
 
     case KEY_UP:
+    case CTRL('r'):
       search_prev(e);
       return 1;
   }
@@ -709,8 +712,8 @@ static void search_on_draw(editor *e, abuf *ab) {
 
 static void search_init(editor *e) {
   (void)e;
-  dispatch_bind(CTRL('f'), search_begin);
-  dispatch_bind(CTRL('g'), goto_begin);
+  dispatch_bind(CTRL('s'), search_begin);
+  dispatch_bind_prefix('g', goto_begin, "g", "Go to line");
 }
 
 static module search = {

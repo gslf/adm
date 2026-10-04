@@ -8,123 +8,127 @@
 // cluster boundary. The screen column is derived from them, never stored.
 
 static int line_len(editor *e, int row) {
-  char *l = buffer_line(&e->buf, row);
+  char *l = buffer_line(&e->view->doc->buf, row);
   return l ? (int)strlen(l) : 0;
 }
 
+int view_cursor_col(const view *v) {
+  const char *line = buffer_line(&v->doc->buf, v->cy);
+  return line ? utf8_cols(line, v->cx) : 0;
+}
+
 int cursor_col(const editor *e) {
-  char *line = buffer_line(&e->buf, e->cy);
-  return line ? utf8_cols(line, e->cx) : 0;
+  return view_cursor_col(e->view);
 }
 
 void cursor_mark_column(editor *e) {
-  e->sticky = cursor_col(e);
+  e->view->sticky = cursor_col(e);
 }
 
 // Put the cursor on the sticky column of the current line, or at its end if
 // the line is too short. This is what makes a run of up and down keys come
 // back to the column it started from instead of drifting left.
 static void seek_column(editor *e) {
-  char *line = buffer_line(&e->buf, e->cy);
-  e->cx = line ? utf8_byte_at_col(line, e->sticky) : 0;
+  char *line = buffer_line(&e->view->doc->buf, e->view->cy);
+  e->view->cx = line ? utf8_byte_at_col(line, e->view->sticky) : 0;
 }
 
 // --- Raw movement, selection unaware ---
 
 static void move_up(editor *e) {
-  if (e->cy > 0)
-    e->cy--;
+  if (e->view->cy > 0)
+    e->view->cy--;
   seek_column(e);
 }
 
 static void move_down(editor *e) {
-  if (e->cy < e->buf.nlines - 1)
-    e->cy++;
+  if (e->view->cy < e->view->doc->buf.nlines - 1)
+    e->view->cy++;
   seek_column(e);
 }
 
 static void move_left(editor *e) {
-  char *line = buffer_line(&e->buf, e->cy);
-  if (e->cx > 0) {
-    e->cx = line ? grapheme_prev(line, e->cx) : 0;
-  } else if (e->cy > 0) {
+  char *line = buffer_line(&e->view->doc->buf, e->view->cy);
+  if (e->view->cx > 0) {
+    e->view->cx = line ? grapheme_prev(line, e->view->cx) : 0;
+  } else if (e->view->cy > 0) {
     // At line start: move to the end of the previous line.
-    e->cy--;
-    e->cx = line_len(e, e->cy);
+    e->view->cy--;
+    e->view->cx = line_len(e, e->view->cy);
   }
   cursor_mark_column(e);
 }
 
 static void move_right(editor *e) {
-  char *line = buffer_line(&e->buf, e->cy);
-  if (e->cx < line_len(e, e->cy)) {
-    e->cx = line ? grapheme_next(line, e->cx) : 0;
-  } else if (e->cy < e->buf.nlines - 1) {
+  char *line = buffer_line(&e->view->doc->buf, e->view->cy);
+  if (e->view->cx < line_len(e, e->view->cy)) {
+    e->view->cx = line ? grapheme_next(line, e->view->cx) : 0;
+  } else if (e->view->cy < e->view->doc->buf.nlines - 1) {
     // At line end: move to the start of the next line.
-    e->cy++;
-    e->cx = 0;
+    e->view->cy++;
+    e->view->cx = 0;
   }
   cursor_mark_column(e);
 }
 
 // One screenful of text, the step a page key takes.
 static int page(const editor *e) {
-  int th = e->rows - 2; // two status bars
+  int th = layout_content(e, e->view).height;
   return th > 0 ? th : 1;
 }
 
 static void move_page_up(editor *e) {
   int n = page(e);
-  e->cy = e->cy > n ? e->cy - n : 0;
+  e->view->cy = e->view->cy > n ? e->view->cy - n : 0;
 
   // Scroll with the cursor so it keeps its place on the screen.
-  e->rowoff = e->rowoff > n ? e->rowoff - n : 0;
+  e->view->rowoff = e->view->rowoff > n ? e->view->rowoff - n : 0;
   seek_column(e);
 }
 
 static void move_page_down(editor *e) {
   int n = page(e);
-  int last = e->buf.nlines > 0 ? e->buf.nlines - 1 : 0;
+  int last = e->view->doc->buf.nlines > 0 ? e->view->doc->buf.nlines - 1 : 0;
 
-  e->cy += n;
-  if (e->cy > last)
-    e->cy = last;
+  e->view->cy += n;
+  if (e->view->cy > last)
+    e->view->cy = last;
 
-  e->rowoff += n;
-  if (e->rowoff > last)
-    e->rowoff = last;
+  e->view->rowoff += n;
+  if (e->view->rowoff > last)
+    e->view->rowoff = last;
 
   seek_column(e);
 }
 
 static void move_home(editor *e) {
-  e->cx = 0;
+  e->view->cx = 0;
   cursor_mark_column(e);
 }
 
 static void move_end(editor *e) {
-  e->cx = line_len(e, e->cy);
+  e->view->cx = line_len(e, e->view->cy);
   cursor_mark_column(e);
 }
 
 static void move_file_start(editor *e) {
-  e->cy = 0;
-  e->cx = 0;
+  e->view->cy = 0;
+  e->view->cx = 0;
   cursor_mark_column(e);
 }
 
 static void move_file_end(editor *e) {
-  e->cy = e->buf.nlines > 0 ? e->buf.nlines - 1 : 0;
-  e->cx = line_len(e, e->cy);
+  e->view->cy = e->view->doc->buf.nlines > 0 ? e->view->doc->buf.nlines - 1 : 0;
+  e->view->cx = line_len(e, e->view->cy);
   cursor_mark_column(e);
 }
 
 // The last line of the file that is on the screen right now. The screen does
 // not move, only the cursor drops to the bottom of it, keeping its column.
 static void move_screen_bottom(editor *e) {
-  int last = e->buf.nlines > 0 ? e->buf.nlines - 1 : 0;
-  int bottom = e->rowoff + page(e) - 1;
-  e->cy = bottom < last ? bottom : last;
+  int last = e->view->doc->buf.nlines > 0 ? e->view->doc->buf.nlines - 1 : 0;
+  int bottom = e->view->rowoff + page(e) - 1;
+  e->view->cy = bottom < last ? bottom : last;
   seek_column(e);
 }
 
@@ -140,40 +144,40 @@ static int is_word(const char *s, int i) {
 }
 
 static void move_word_right(editor *e) {
-  char *line = buffer_line(&e->buf, e->cy);
+  char *line = buffer_line(&e->view->doc->buf, e->view->cy);
   int len = line ? (int)strlen(line) : 0;
 
-  if (!line || e->cx >= len) {
+  if (!line || e->view->cx >= len) {
     move_right(e); // at the line end, carry on to the next line
     return;
   }
 
   // Leave the current word, then cross the separators to the next one.
-  while (e->cx < len && is_word(line, e->cx))
-    e->cx = grapheme_next(line, e->cx);
-  while (e->cx < len && !is_word(line, e->cx))
-    e->cx = grapheme_next(line, e->cx);
+  while (e->view->cx < len && is_word(line, e->view->cx))
+    e->view->cx = grapheme_next(line, e->view->cx);
+  while (e->view->cx < len && !is_word(line, e->view->cx))
+    e->view->cx = grapheme_next(line, e->view->cx);
 
   cursor_mark_column(e);
 }
 
 static void move_word_left(editor *e) {
-  char *line = buffer_line(&e->buf, e->cy);
+  char *line = buffer_line(&e->view->doc->buf, e->view->cy);
 
-  if (!line || e->cx == 0) {
+  if (!line || e->view->cx == 0) {
     move_left(e); // at the line start, carry on to the previous line
     return;
   }
 
   // Step back over the separators, then to the front of the word.
-  e->cx = grapheme_prev(line, e->cx);
-  while (e->cx > 0 && !is_word(line, e->cx))
-    e->cx = grapheme_prev(line, e->cx);
-  while (e->cx > 0) {
-    int p = grapheme_prev(line, e->cx);
+  e->view->cx = grapheme_prev(line, e->view->cx);
+  while (e->view->cx > 0 && !is_word(line, e->view->cx))
+    e->view->cx = grapheme_prev(line, e->view->cx);
+  while (e->view->cx > 0) {
+    int p = grapheme_prev(line, e->view->cx);
     if (!is_word(line, p))
       break;
-    e->cx = p;
+    e->view->cx = p;
   }
 
   cursor_mark_column(e);
@@ -182,35 +186,39 @@ static void move_word_left(editor *e) {
 // --- Selection ---
 
 void selection_clear(editor *e) {
-  e->sel_active = 0;
-  e->sel_mode = 0;
+  e->view->sel_active = 0;
+  e->view->sel_mode = 0;
 }
 
 void cursor_select_toggle(editor *e) {
-  if (e->sel_mode) {
+  if (e->view->sel_mode) {
     selection_clear(e);
     return;
   }
 
-  e->sel_mode = 1;
-  e->selx = e->cx;
-  e->sely = e->cy;
-  e->sel_active = 0; // nothing is covered until the cursor moves
+  e->view->sel_mode = 1;
+  e->view->selx = e->view->cx;
+  e->view->sely = e->view->cy;
+  e->view->sel_active = 0; // nothing is covered until the cursor moves
 }
 
-int selection_range(const editor *e, int *sr, int *sc, int *er, int *ec) {
-  if (!e->sel_active)
+int view_selection_range(const view *v, int *sr, int *sc, int *er, int *ec) {
+  if (!v->sel_active)
     return 0;
 
   // The anchor may sit after the cursor, so order the two points.
-  if (e->sely < e->cy || (e->sely == e->cy && e->selx <= e->cx)) {
-    *sr = e->sely; *sc = e->selx;
-    *er = e->cy;   *ec = e->cx;
+  if (v->sely < v->cy || (v->sely == v->cy && v->selx <= v->cx)) {
+    *sr = v->sely; *sc = v->selx;
+    *er = v->cy;   *ec = v->cx;
   } else {
-    *sr = e->cy;   *sc = e->cx;
-    *er = e->sely; *ec = e->selx;
+    *sr = v->cy;   *sc = v->cx;
+    *er = v->sely; *ec = v->selx;
   }
   return 1;
+}
+
+int selection_range(const editor *e, int *sr, int *sc, int *er, int *ec) {
+  return view_selection_range(e->view, sr, sc, er, ec);
 }
 
 void selection_delete(editor *e) {
@@ -220,24 +228,24 @@ void selection_delete(editor *e) {
 
   if (sr == er) {
     for (int i = ec - sc; i > 0; i--)
-      buffer_delete_char(&e->buf, sr, sc);
+      buffer_delete_char(&e->view->doc->buf, sr, sc);
   } else {
     // Cut the tail of the first row and the head of the last one, drop the
     // fully selected rows in between, then pull what is left of the last
     // row up onto the first.
-    char *first = buffer_line(&e->buf, sr);
+    char *first = buffer_line(&e->view->doc->buf, sr);
     int flen = first ? (int)strlen(first) : 0;
     for (int i = flen - sc; i > 0; i--)
-      buffer_delete_char(&e->buf, sr, sc);
+      buffer_delete_char(&e->view->doc->buf, sr, sc);
     for (int i = ec; i > 0; i--)
-      buffer_delete_char(&e->buf, er, 0);
+      buffer_delete_char(&e->view->doc->buf, er, 0);
     for (int r = er - 1; r > sr; r--)
-      buffer_remove_line(&e->buf, r);
-    buffer_join_line(&e->buf, sr);
+      buffer_remove_line(&e->view->doc->buf, r);
+    buffer_join_line(&e->view->doc->buf, sr);
   }
 
-  e->cy = sr;
-  e->cx = sc;
+  e->view->cy = sr;
+  e->view->cx = sc;
   selection_clear(e); // the text it covered is gone, and so is the mode
   cursor_mark_column(e);
 }
@@ -249,7 +257,7 @@ int selection_char_count(const editor *e) {
 
   int total = 0;
   for (int r = sr; r <= er; r++) {
-    const char *line = buffer_line(&e->buf, r);
+    const char *line = buffer_line(&e->view->doc->buf, r);
     if (!line)
       continue;
 
@@ -267,8 +275,8 @@ int selection_char_count(const editor *e) {
 // drops the selection; with it on, the anchor stays put and the move extends
 // the selection to wherever the cursor lands.
 static void do_move(editor *e, command move) {
-  if (!e->sel_mode)
-    e->sel_active = 0;
+  if (!e->view->sel_mode)
+    e->view->sel_active = 0;
 
   move(e);
 
@@ -278,8 +286,8 @@ static void do_move(editor *e, command move) {
   // covers no text has to stop counting as one: while it is still active,
   // backspace and delete believe there is something to remove, do nothing,
   // and swallow the keystroke while marking the file as modified.
-  if (e->sel_mode)
-    e->sel_active = (e->cy != e->sely || e->cx != e->selx);
+  if (e->view->sel_mode)
+    e->view->sel_active = (e->view->cy != e->view->sely || e->view->cx != e->view->selx);
 }
 
 void cursor_up(editor *e)         { do_move(e, move_up); }
@@ -296,24 +304,21 @@ void cursor_file_start(editor *e) { do_move(e, move_file_start); }
 void cursor_file_end(editor *e)   { do_move(e, move_file_end); }
 void cursor_screen_bottom(editor *e) { do_move(e, move_screen_bottom); }
 
+void cursor_scroll_view(view *v, int width, int height) {
+  int th = height > 0 ? height : 1;
+  int tw = width > 0 ? width : 1;
+  if (v->cy < v->rowoff)
+    v->rowoff = v->cy;
+  if (v->cy >= v->rowoff + th)
+    v->rowoff = v->cy - th + 1;
+  int col = view_cursor_col(v);
+  if (col < v->coloff)
+    v->coloff = col;
+  if (col >= v->coloff + tw)
+    v->coloff = col - tw + 1;
+}
+
 void cursor_scroll(editor *e) {
-  int th = e->rows - 2; // two status bars
-  if (th < 1)
-    th = 1;
-  int tw = e->cols - screen_gutter(e);
-  if (tw < 1)
-    tw = 1;
-
-  // Vertical
-  if (e->cy < e->rowoff)
-    e->rowoff = e->cy;
-  if (e->cy >= e->rowoff + th)
-    e->rowoff = e->cy - th + 1;
-
-  // Horizontal, in screen columns rather than bytes
-  int col = cursor_col(e);
-  if (col < e->coloff)
-    e->coloff = col;
-  if (col >= e->coloff + tw)
-    e->coloff = col - tw + 1;
+  rect area = layout_content(e, e->view);
+  cursor_scroll_view(e->view, area.width - screen_gutter(e->view), area.height);
 }

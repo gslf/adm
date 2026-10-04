@@ -46,6 +46,14 @@ void buffer_init(buffer *b) {
   b->head = NULL;
   b->tail = NULL;
   b->nlines = 0;
+  b->on_edit = NULL;
+  b->edit_context = NULL;
+}
+
+// Range replacements let observers track positions without knowing storage.
+static void notify_edit(buffer *b, buffer_edit edit) {
+  if (b->on_edit)
+    b->on_edit(b, &edit, b->edit_context);
 }
 
 int load(buffer *b, const char *filename) {
@@ -255,6 +263,7 @@ int buffer_insert_char(buffer *b, int row, int col, char c) {
   memmove(nl + col + 1, nl + col, len - col + 1); // shift, terminator included
   nl[col] = c;
   *slot = nl;
+  notify_edit(b, (buffer_edit){row, col, row, col, row, col + 1});
   return 0;
 }
 
@@ -301,6 +310,7 @@ int buffer_insert_newline(buffer *b, int row, int col) {
   } else {
     (*slot)[col] = '\0'; // shrink failed: truncate in place
   }
+  notify_edit(b, (buffer_edit){row, col, row, col, row + 1, 0});
   return 0;
 }
 
@@ -335,7 +345,10 @@ static void remove_line(buffer *b, int index) {
 }
 
 void buffer_remove_line(buffer *b, int index) {
+  if (index < 0 || index >= b->nlines)
+    return;
   remove_line(b, index);
+  notify_edit(b, (buffer_edit){index, 0, index + 1, 0, index, 0});
 }
 
 int buffer_delete_char(buffer *b, int row, int col) {
@@ -352,6 +365,7 @@ int buffer_delete_char(buffer *b, int row, int col) {
   char *nl = realloc(line, len);                  // len-1 chars + '\0'
   if (nl)
     *slot = nl; // if realloc fails, line is still valid
+  notify_edit(b, (buffer_edit){row, col, row, col + 1, row, col});
   return 0;
 }
 
@@ -373,6 +387,7 @@ int buffer_join_line(buffer *b, int row) {
   *slot = merged;
 
   remove_line(b, row + 1); // frees the old next line
+  notify_edit(b, (buffer_edit){row, la, row + 1, 0, row, la});
   return 0;
 }
 

@@ -457,7 +457,7 @@ static char *selection_text(const editor *e) {
   builder_init(&text);
 
   for (int row = sel.first_row; row <= sel.last_row; row++) {
-    const char *line = buffer_line(&e->buf, row);
+    const char *line = buffer_line(&e->view->doc->buf, row);
     byte_range range = selected_bytes_in_row(&sel, row, line);
 
     if (line != NULL)
@@ -494,18 +494,18 @@ static void insert_text_at_cursor(editor *e, const char *text) {
     if (c == '\n' || c == '\r') {
       // Running out of memory stops the paste but leaves the buffer sound,
       // with everything inserted so far still in place.
-      if (buffer_insert_newline(&e->buf, e->cy, e->cx) != 0)
+      if (buffer_insert_newline(&e->view->doc->buf, e->view->cy, e->view->cx) != 0)
         return;
 
-      e->cy++;
-      e->cx = 0;
+      e->view->cy++;
+      e->view->cx = 0;
       continue;
     }
 
-    if (buffer_insert_char(&e->buf, e->cy, e->cx, c) != 0)
+    if (buffer_insert_char(&e->view->doc->buf, e->view->cy, e->view->cx, c) != 0)
       return;
 
-    e->cx++;
+    e->view->cx++;
   }
 }
 
@@ -532,7 +532,7 @@ static void clip_cut(editor *e) {
   clipboard_set(text);
   selection_delete(e);
 
-  e->dirty = 1;
+  e->view->doc->dirty = 1;
   dispatch_change(e);
 }
 
@@ -556,14 +556,14 @@ static void clip_paste(editor *e) {
 
   // Pasting over a selection replaces it, and pasting at all ends selection
   // mode, exactly as typing does.
-  if (e->sel_active)
+  if (e->view->sel_active)
     selection_delete(e);
   selection_clear(e);
 
   insert_text_at_cursor(e, text);
   free(from_system); // the internal register is not ours to free here
 
-  e->dirty = 1;
+  e->view->doc->dirty = 1;
   cursor_mark_column(e);
   dispatch_change(e);
 }
@@ -576,9 +576,9 @@ static void clip_init(editor *e) {
 
   clipboard_platform_init();
 
-  dispatch_bind(CTRL('c'), clip_copy);
-  dispatch_bind(CTRL('x'), clip_cut);
-  dispatch_bind(CTRL('v'), clip_paste);
+  dispatch_bind(META('w'), clip_copy);
+  dispatch_bind(CTRL('w'), clip_cut);
+  dispatch_bind(CTRL('y'), clip_paste);
 }
 
 static void clip_shutdown(editor *e) {

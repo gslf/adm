@@ -9,10 +9,19 @@ typedef struct block {
   struct block *next;
 } block;
 
-typedef struct {
+// Replace [row:col, old_row:old_col) with text ending at new_row:new_col.
+typedef struct buffer_edit {
+  int row, col;
+  int old_row, old_col;
+  int new_row, new_col;
+} buffer_edit;
+
+typedef struct buffer {
   block *head;
   block *tail;
   int nlines;
+  void (*on_edit)(struct buffer *b, const buffer_edit *edit, void *context);
+  void *edit_context;
 } buffer;
 
 void buffer_init(buffer *b);
@@ -27,4 +36,3 @@ int buffer_join_line(buffer *b, int row);
 void buffer_free(buffer *b);
 
 #endif
-

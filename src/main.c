@@ -5,27 +5,22 @@
 #include "screen.h"
 #include "clipboard.h"
 #include "search.h"
-#include "help.h"
 
 int main(int argc, char *argv[]) {
-  editor e;
-  e.filename = (argc > 1) ? argv[1] : NULL;
+  editor e = {0};
+  e.document.filename = (argc > 1) ? argv[1] : NULL;
 
   // Buffer loading
-  if (load(&e.buf, e.filename) == -1) {
-    fprintf(stderr, "BUFFER LOAD ERROR: %s\n", e.filename ? e.filename : "");
+  if (load(&e.document.buf, e.document.filename) == -1) {
+    fprintf(stderr, "BUFFER LOAD ERROR: %s\n", e.document.filename ? e.document.filename : "");
     return 1;
   }
-  e.cx = e.cy = e.rowoff = e.coloff = 0;
-  e.selx = e.sely = e.sel_active = e.sel_mode = e.sticky = 0;
-  e.dirty = 0;
-  e.quit_pending = 0;
   e.running = 1;
 
   // Raw terminal init
   if (init_raw() == -1) {
     fprintf(stderr, "TERMINAL INITIALIZATION ERROR\n");
-    buffer_free(&e.buf);
+    buffer_free(&e.document.buf);
     return 1;
   }
   termsize ts = get_size();
@@ -35,7 +30,6 @@ int main(int argc, char *argv[]) {
   // Key bindings and modules dispatch
   dispatch_register(clipboard_module());
   dispatch_register(search_module());
-  dispatch_register(help_module());
   dispatch_init(&e);
 
   // Main loop
@@ -51,13 +45,12 @@ int main(int argc, char *argv[]) {
     screen_refresh(&e);
 
     int k = read_key();
-    if (k)
+    if (k != KEY_NONE)
       dispatch_key(&e, k);
   }
 
   screen_clear();
   dispatch_shutdown(&e);
-  buffer_free(&e.buf);
   restore();
   return 0;
 }

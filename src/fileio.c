@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 
 static int replace(const char *tmp, const char *dst){
@@ -31,7 +32,10 @@ char *file_read(const char *path){
   if (!fp) return NULL;
 
   // File lenght mesurement
-  fseek(fp, 0, SEEK_END);
+  if (fseek(fp, 0, SEEK_END) != 0) {
+    fclose(fp);
+    return NULL;
+  }
   long size = ftell(fp);
   if (size < 0){
     fclose(fp);
@@ -48,6 +52,12 @@ char *file_read(const char *path){
 
   // Read the file
   size_t n = fread(buf, 1, (size_t)size, fp);
+  if (n != (size_t)size || ferror(fp) || memchr(buf, '\0', n)) {
+    free(buf);
+    fclose(fp);
+    errno = EILSEQ;
+    return NULL;
+  }
   buf[n] = '\0';
   
   fclose(fp);

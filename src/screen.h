@@ -13,7 +13,7 @@ void ab_append(abuf *ab, const char *s, int len);
 void ab_free(abuf *ab);
 
 // Width of the line-number column (number plus a space).
-int screen_gutter(const editor *e);
+int screen_gutter(const view *v);
 
 // Redraw the whole screen (status bars, text, cursor).
 void screen_refresh(editor *e);
