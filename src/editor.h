@@ -23,6 +23,7 @@ typedef struct editor {
   struct search_state *search;
   struct undo_state *undo;
   struct lsp_state *lsp;
+  struct plugin_state *plugins;
   int syntax_enabled;
   sidebar sidebar;
   git_panel git;

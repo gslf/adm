@@ -1,3 +1,4 @@
+#include "theme.h"
 #include "navigation.h"
 #include "dispatch.h"
 #include "screen.h"
@@ -84,6 +85,11 @@ static const char *help_lines[] = {
   "N/f        Rename symbol / format current file",
   "a/t/?      Automatic startup / syntax colours / LSP help",
   "",
+  "M-c        User Center (Alt-c or Esc then c)",
+  "Up/Down    Choose a plugin command; Enter or its key runs it",
+  "Esc / C-g  Close User Center; see HELP.md for configuration",
+  "~/.adm.conf  Optional theme and C plugin configuration",
+  "",
   "Up/Down or PgUp/PgDown scroll; ESC closes this help"
 };
 #define HELP_COUNT ((int)(sizeof help_lines / sizeof help_lines[0]))
@@ -127,9 +133,9 @@ void navigation_draw(editor *e, abuf *ab) {
   int x = (e->cols - width) / 2, y = (e->rows - 2 - height) / 2 + 1;
   for (int i = 0; i < height; i++) {
     screen_position(ab, x, y + i);
-    ab_append(ab, "\x1b[97;44m", 8);
+    theme_append(ab, THEME_ACTIVE);
     int used = screen_text(ab, help_lines[e->help_scroll + i], width);
     screen_repeat(ab, ' ', width - used);
-    ab_append(ab, "\x1b[m", 3);
+    theme_append(ab, THEME_NORMAL);
   }
 }

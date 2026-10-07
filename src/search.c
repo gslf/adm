@@ -1,3 +1,4 @@
+#include "theme.h"
 #include "search.h"
 #include "cursor.h"
 #include "path.h"
@@ -707,10 +708,10 @@ static void on_draw(editor *e, abuf *ab) {
   int cursor;
   bar(e, text, sizeof text, &cursor);
   screen_position(ab, 0, e->rows - 1);
-  ab_append(ab, "\x1b[30;103m", 9);
+  theme_append(ab, THEME_STATUS);
   int used = screen_text(ab, text, e->cols);
   screen_repeat(ab, ' ', e->cols - used);
-  ab_append(ab, "\x1b[m", 3);
+  theme_append(ab, THEME_NORMAL);
 }
 int search_cursor(const editor *e, int *x, int *y) {
   if (!search_active(e) || e->confirmation)
@@ -731,12 +732,12 @@ int search_files_draw(editor *e, abuf *ab, rect area) {
   search_job_progress(s->job, &s->progress);
   screen_fill(ab, area, ' ');
   screen_position(ab, area.x, area.y);
-  const char *focus = e->sidebar.focused ? "\x1b[97;44m" : "\x1b[30;47m";
+  const char *focus = e->sidebar.focused ? theme_colour(THEME_ACTIVE) : theme_colour(THEME_INACTIVE);
   ab_append(ab, focus, (int)strlen(focus));
   int used = screen_text(
       ab, e->sidebar.focused ? " FILES * SEARCH" : " FILES SEARCH", area.width);
   screen_repeat(ab, ' ', area.width - used);
-  ab_append(ab, "\x1b[m", 3);
+  theme_append(ab, THEME_NORMAL);
   int rows = (area.height - 2) / 2;
   if (rows < 1)
     rows = 1;
@@ -764,7 +765,7 @@ int search_files_draw(editor *e, abuf *ab, rect area) {
       start = grapheme_next(file.path, start);
     used = screen_text(ab, file.path + start, area.width);
     screen_repeat(ab, ' ', area.width - used);
-    ab_append(ab, "\x1b[m", 3);
+    theme_append(ab, THEME_NORMAL);
     free(file.path);
   }
   screen_position(ab, area.x, area.y + area.height - 1);

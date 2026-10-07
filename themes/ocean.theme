@@ -1,0 +1,24 @@
+# Ocean — ANSI 256 colours
+[colors]
+normal = 253, 17
+status = 17, 45
+warning = 231, 160
+selection = 231, 24
+active = 231, 24
+inactive = 253, 18
+muted = 103, 17
+accent = 45, 17
+logo = 226, 17
+popup = 253, 18
+diff_added = 194, 22
+diff_removed = 224, 52
+diff_context = 253, 18
+diff_hunk = 45, 17
+diff_meta = 103, 17
+keyword = 111, 17
+type = 45, 17
+string = 121, 17
+comment = 103, 17
+number = 221, 17
+directive = 111, 17
+function = 45, 17

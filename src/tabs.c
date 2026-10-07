@@ -1,3 +1,4 @@
+#include "theme.h"
 #include "tabs.h"
 #include "dispatch.h"
 #include "screen.h"
@@ -178,13 +179,13 @@ void tabs_draw(const editor *e, abuf *ab, int width) {
       dirty |= w->panes[i].doc && w->panes[i].doc->dirty;
     snprintf(label, sizeof label, " %d%s %s", index + 1, dirty ? "*" : "",
              !doc ? "[Empty]" : doc->label ? doc->label : doc->filename ? path_name(doc->filename) : "[No Name]");
-    const char *colour = tab == e->active_tab ? "\x1b[97;44m" : "\x1b[30;47m";
+    const char *colour = tab == e->active_tab ? theme_colour(THEME_ACTIVE) : theme_colour(THEME_INACTIVE);
     ab_append(ab, colour, (int)strlen(colour));
     int n = screen_text(ab, label, slot);
     screen_repeat(ab, ' ', slot - n);
     used += slot;
   }
-  ab_append(ab, "\x1b[30;103m", 9);
+  theme_append(ab, THEME_STATUS);
   screen_repeat(ab, ' ', width - used);
 }
 

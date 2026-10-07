@@ -1,3 +1,4 @@
+#include "theme.h"
 #include "new_file.h"
 #include "dispatch.h"
 #include "screen.h"
@@ -185,21 +186,21 @@ void new_file_draw(const editor *e, abuf *ab) {
   if (!e->new_file.active)
     return;
   screen_position(ab, 0, e->rows - 1);
-  ab_append(ab, "\x1b[30;103m", 9);
+  theme_append(ab, THEME_STATUS);
   int used = screen_text(ab, badge_width(e) == 10 ? " NEW FILE " :
                         badge_width(e) == 3 ? "N: " : "", e->cols), col;
   int start = offset(e, &col);
   used += screen_text(ab, e->new_file.name + start, e->cols - used);
   screen_repeat(ab, ' ', e->cols - used);
-  ab_append(ab, "\x1b[m", 3);
+  theme_append(ab, THEME_NORMAL);
   if (e->rows > 2) {
     screen_position(ab, 0, e->rows - 2);
     const char *text = e->new_file.error[0] ? e->new_file.error : e->new_file.directory;
     if (e->new_file.error[0])
-      ab_append(ab, "\x1b[97;41m", 8);
+      theme_append(ab, THEME_WARNING);
     used = screen_text(ab, text, e->cols);
     screen_repeat(ab, ' ', e->cols - used);
-    ab_append(ab, "\x1b[m", 3);
+    theme_append(ab, THEME_NORMAL);
   }
 }
 

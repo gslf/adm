@@ -1,0 +1,24 @@
+# Paper — ANSI 256 colours
+[colors]
+normal = 237, 255
+status = 255, 24
+warning = 231, 160
+selection = 231, 24
+active = 231, 24
+inactive = 237, 254
+muted = 244, 255
+accent = 24, 255
+logo = 136, 255
+popup = 237, 254
+diff_added = 22, 194
+diff_removed = 88, 224
+diff_context = 237, 254
+diff_hunk = 24, 255
+diff_meta = 244, 255
+keyword = 90, 255
+type = 24, 255
+string = 28, 255
+comment = 244, 255
+number = 130, 255
+directive = 90, 255
+function = 24, 255

@@ -1,3 +1,4 @@
+#include "theme.h"
 #include "syntax.h"
 #include "document.h"
 #include "runtime.h"
@@ -98,22 +99,7 @@ size_t syntax_line(document *doc, int row, syntax_span *out, size_t capacity) {
   return c->language->highlight(line, &state, out, capacity);
 }
 const char *syntax_colour(syntax_kind kind) {
-  switch (kind) {
-  case SYNTAX_KEYWORD:
-    return "\x1b[95m";
-  case SYNTAX_TYPE:
-    return "\x1b[96m";
-  case SYNTAX_STRING:
-    return "\x1b[92m";
-  case SYNTAX_COMMENT:
-    return "\x1b[90m";
-  case SYNTAX_NUMBER:
-    return "\x1b[93m";
-  case SYNTAX_DIRECTIVE:
-    return "\x1b[94m";
-  case SYNTAX_FUNCTION:
-    return "\x1b[36m";
-  default:
-    return "\x1b[39m";
-  }
+  static const theme_role roles[] = {THEME_NORMAL, THEME_KEYWORD, THEME_TYPE,
+    THEME_STRING, THEME_COMMENT, THEME_NUMBER, THEME_DIRECTIVE, THEME_FUNCTION};
+  return theme_colour(kind >= SYNTAX_TEXT && kind <= SYNTAX_FUNCTION ? roles[kind] : THEME_NORMAL);
 }

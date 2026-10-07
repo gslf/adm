@@ -8,6 +8,7 @@
 #include "search.h"
 #include "undo.h"
 #include "lsp.h"
+#include "plugins.h"
 
 #include <stdio.h>
 
@@ -299,6 +300,7 @@ void dispatch_init(editor *e) {
 
   dispatch_register(undo_module());
   dispatch_register(lsp_module());
+  dispatch_register(plugins_module());
   // Module init hooks.
   for (int i = 0; i < nmods; i++)
     if (mods[i]->init)
@@ -364,8 +366,14 @@ static void dispatch_key_impl(editor *e, int key) {
     return;
   }
 
+  if (plugins_modal(e) && plugins_key(e, key)) return;
   if (lsp_modal(e) && lsp_key(e, key)) return;
   int slot = key_slot(key);
+  if (key == META('c') && !e->help_active && !search_active(e) && !git_panel_prompt(e)) {
+    e->move_active = 0;
+    plugins_key(e, key);
+    return;
+  }
   if (e->move_active && !e->help_active && creation_key(key)) {
     if (cmds[slot])
       cmds[slot](e);

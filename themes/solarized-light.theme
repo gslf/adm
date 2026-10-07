@@ -1,0 +1,24 @@
+# Solarized Light — ANSI 256 colours
+[colors]
+normal = 240, 230
+status = 230, 30
+warning = 231, 160
+selection = 231, 23
+active = 231, 23
+inactive = 240, 223
+muted = 244, 230
+accent = 30, 230
+logo = 136, 230
+popup = 240, 223
+diff_added = 22, 194
+diff_removed = 88, 224
+diff_context = 240, 223
+diff_hunk = 30, 230
+diff_meta = 244, 230
+keyword = 136, 230
+type = 30, 230
+string = 64, 230
+comment = 244, 230
+number = 166, 230
+directive = 136, 230
+function = 30, 230

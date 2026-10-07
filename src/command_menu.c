@@ -1,3 +1,4 @@
+#include "theme.h"
 #include "command_menu.h"
 #include "screen.h"
 
@@ -130,8 +131,9 @@ void command_menu_draw(editor *e, abuf *ab) {
 
   for (int y = 0; y < height; y++) {
     char pos[40], line[1024] = {0};
-    int n = snprintf(pos, sizeof pos, "\x1b[%d;%dH\x1b[97;44m", top + y, left);
+    int n = snprintf(pos, sizeof pos, "\x1b[%d;%dH", top + y, left);
     ab_append(ab, pos, n);
+    theme_append(ab, THEME_ACTIVE);
     int border = y == 0 || y == height - 1;
     if (y == 1)
       centered(line, sizeof line, "][ adm - Command Center", width - 2);
@@ -152,6 +154,6 @@ void command_menu_draw(editor *e, abuf *ab) {
                      : x - 1 < len ? line[x - 1] : ' ';
       ab_append(ab, &c, 1);
     }
-    ab_append(ab, "\x1b[m", 3);
+    theme_append(ab, THEME_NORMAL);
   }
 }

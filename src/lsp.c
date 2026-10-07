@@ -1,3 +1,4 @@
+#include "theme.h"
 #include "lsp.h"
 #include "cursor.h"
 #include "dispatch.h"
@@ -1518,25 +1519,25 @@ int lsp_key(editor *e, int key) {
 static void popup_row(editor *e, abuf *ab, int y, const char *text,
                       int selected) {
   screen_position(ab, 0, y);
-  const char *colour = selected ? "\x1b[97;44m" : "\x1b[37;48;5;235m";
+  const char *colour = selected ? theme_colour(THEME_ACTIVE) : theme_colour(THEME_POPUP);
   ab_append(ab, colour, (int)strlen(colour));
   int used = screen_text(ab, text, e->cols);
   screen_repeat(ab, ' ', e->cols - used);
-  ab_append(ab, "\x1b[m", 3);
+  theme_append(ab, THEME_NORMAL);
 }
 static void draw(editor *e, abuf *ab) {
   struct lsp_state *l = e->lsp;
   if (l && l->name_prompt) {
     int prefix, start = name_start(e, &prefix);
     screen_position(ab, 0, e->rows - 1);
-    ab_append(ab, "\x1b[30;103m", 9);
+    theme_append(ab, THEME_STATUS);
     const char *title = prefix == 18  ? " RENAME New name: "
                         : prefix == 6 ? "Name: "
                                       : "N:";
     int used = screen_text(ab, title, e->cols);
     used += screen_text(ab, l->new_name + start, e->cols - used - 1);
     screen_repeat(ab, ' ', e->cols - used);
-    ab_append(ab, "\x1b[m", 3);
+    theme_append(ab, THEME_NORMAL);
     return;
   }
   if (!l || (!l->menu && !l->popup))

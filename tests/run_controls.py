@@ -6,6 +6,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 
 root = Path(__file__).resolve().parent.parent
@@ -90,14 +91,32 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
     flags = shlex.split(os.environ.get("CFLAGS", "-std=c11 -Wall -Wextra -O2 -D_DEFAULT_SOURCE"))
     if os.name == "posix" and "-pthread" not in flags:
         flags.append("-pthread")
-    for suite in ("languages", "lsp", "lsp_edits", "pattern", "search", "undo", "controls", "navigation", "splits", "tabs", "empty_views", "large_files", "lifecycle", "file_manager", "process", "diff", "git", "git_initial"):
+    link_flags = shlex.split(os.environ.get("LDLIBS", "-ldl" if sys.platform.startswith("linux") else ""))
+    os.environ["ADM_CONFIG"] = str(Path(directory) / "no-user-config")
+    for suite in ("config", "plugins", "languages", "lsp", "lsp_edits", "pattern", "search", "undo", "controls", "navigation", "splits", "tabs", "empty_views", "large_files", "lifecycle", "file_manager", "process", "diff", "git", "git_initial"):
         binary = Path(directory) / suite
-        subprocess.run(compiler + flags + (["-DADM_TEST_ALLOC"] if suite in ("undo", "lsp_edits") else []) + ["-I", str(root / "src"), "-o", str(binary),
+        subprocess.run(compiler + flags + (["-DADM_TEST_ALLOC"] if suite in ("undo", "lsp_edits", "plugins") else []) + ["-I", str(root / "src"), "-o", str(binary),
                                          str(root / "tests" / f"{suite}.c")]
-                       + [str(p) for p in sources], check=True)
+                       + [str(p) for p in sources] + link_flags, check=True)
         environment = dict(os.environ, PATH="")
         argument = Path(directory) / f"{suite}.txt"
         working_directory = root
+        if suite in ("config", "plugins"):
+            working_directory = Path(directory) / (suite + " workspace")
+            working_directory.mkdir()
+            argument = working_directory / "document.txt"
+            environment["ADM_TEST_THEMES"] = str(root / "themes")
+        if suite == "plugins":
+            extension = ".dll" if os.name == "nt" else ".dylib" if sys.platform == "darwin" else ".so"
+            for env_name, macro, name in (("ADM_TEST_PLUGIN", None, "good"),
+                                           ("ADM_TEST_BAD_PLUGIN", "ADM_FIXTURE_BAD_VERSION", "bad"),
+                                           ("ADM_TEST_NO_PLUGIN", "ADM_FIXTURE_NO_VERSION", "no")):
+                library = working_directory / (name + extension)
+                shared_flags = ["-dynamiclib"] if sys.platform == "darwin" else ["-shared"]
+                if os.name == "posix": shared_flags.append("-fPIC")
+                subprocess.run(compiler + flags + shared_flags + (["-D" + macro] if macro else []) +
+                               ["-I", str(root / "src"), str(root / "tests/plugin_fixture.c"), "-o", str(library)], check=True)
+                environment[env_name] = str(library)
         if suite == "git":
             working_directory, remote, environment, git = git_fixture(Path(directory))
             argument = working_directory / "alpha.txt"
@@ -166,7 +185,12 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
         from terminal import run, run_empty, run_file_manager, run_git, run_search, run_undo, run_lsp
         binary = Path(directory) / "adm"
         subprocess.run(compiler + flags + ["-o", str(binary), str(root / "src" / "main.c")]
-                       + [str(p) for p in sources], check=True)
+                       + [str(p) for p in sources] + link_flags, check=True)
+        from theme_terminal import run as run_theme_plugins
+        example_library = Path(directory) / ("timestamp.dylib" if sys.platform == "darwin" else "timestamp.so")
+        subprocess.run(compiler + flags + ["-fPIC", "-dynamiclib" if sys.platform == "darwin" else "-shared",
+                       "-I", str(root / "src"), str(root / "plugins/timestamp.c"), "-o", str(example_library)], check=True)
+        run_theme_plugins(binary, root / "themes", example_library)
         run(binary)
         run_undo(binary)
         run_lsp(binary)

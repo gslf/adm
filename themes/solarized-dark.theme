@@ -1,0 +1,24 @@
+# Solarized Dark — ANSI 256 colours
+[colors]
+normal = 109, 234
+status = 234, 37
+warning = 231, 160
+selection = 231, 24
+active = 231, 24
+inactive = 109, 235
+muted = 240, 234
+accent = 37, 234
+logo = 226, 234
+popup = 109, 235
+diff_added = 194, 22
+diff_removed = 224, 52
+diff_context = 109, 235
+diff_hunk = 37, 234
+diff_meta = 240, 234
+keyword = 136, 234
+type = 37, 234
+string = 64, 234
+comment = 240, 234
+number = 166, 234
+directive = 136, 234
+function = 37, 234

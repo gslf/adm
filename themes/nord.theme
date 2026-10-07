@@ -1,0 +1,24 @@
+# Nord — ANSI 256 colours
+[colors]
+normal = 253, 236
+status = 236, 110
+warning = 231, 160
+selection = 231, 60
+active = 231, 60
+inactive = 253, 238
+muted = 245, 236
+accent = 110, 236
+logo = 226, 236
+popup = 253, 238
+diff_added = 194, 22
+diff_removed = 224, 52
+diff_context = 253, 238
+diff_hunk = 110, 236
+diff_meta = 245, 236
+keyword = 146, 236
+type = 110, 236
+string = 151, 236
+comment = 245, 236
+number = 180, 236
+directive = 146, 236
+function = 110, 236

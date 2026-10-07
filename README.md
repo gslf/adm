@@ -14,6 +14,8 @@ A small terminal text editor for POSIX and Windows, built with C11.
 - **Git Manager**
 - **Editing tools**
 - **Syntax colours and optional LSP support**
+- **Configurable themes**
+- **C plugins and User Center**
 
 ## Build and run
 

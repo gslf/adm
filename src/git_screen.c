@@ -1,3 +1,4 @@
+#include "theme.h"
 #include "git_panel.h"
 #include "screen.h"
 #include "utf8.h"
@@ -16,7 +17,7 @@ static void line(abuf *ab, rect area, int row, const char *text, const char *col
   style(ab, colour);
   int used = screen_text(ab, text, area.width);
   screen_repeat(ab, ' ', area.width - used);
-  style(ab, "\x1b[m");
+  style(ab, theme_colour(THEME_NORMAL));
 }
 
 static int selected_colour(const editor *e) {
@@ -51,7 +52,7 @@ static void files(editor *e, abuf *ab, rect area, int height) {
              section == GIT_STAGED ? "Staged" : "Changes", count);
     int row = logical++ - panel->offset;
     if (row >= 0 && row < height)
-      line(ab, area, row + 2, header, "\x1b[1;36m");
+      line(ab, area, row + 2, header, theme_colour(THEME_ACCENT));
     for (int i = 0; i < count; i++, item++) {
       git_item entry = git_repository_item(repo, item);
       row = logical++ - panel->offset;
@@ -59,7 +60,7 @@ static void files(editor *e, abuf *ab, rect area, int height) {
         continue;
       const git_file *file = entry.file;
       screen_position(ab, area.x, area.y + row + 2);
-      style(ab, item == panel->selected ? selected_colour(e) ? "\x1b[97;44m" : "\x1b[30;47m" : "\x1b[m");
+      style(ab, item == panel->selected ? selected_colour(e) ? theme_colour(THEME_ACTIVE) : theme_colour(THEME_INACTIVE) : theme_colour(THEME_NORMAL));
       char status[8];
       snprintf(status, sizeof status, " %c ", file->conflict ? '!' : file->untracked ? '?' :
                section == GIT_STAGED ? file->index : file->worktree);
@@ -70,11 +71,11 @@ static void files(editor *e, abuf *ab, rect area, int height) {
         used += screen_text(ab, file->original, area.width - used);
       }
       screen_repeat(ab, ' ', area.width - used);
-      style(ab, "\x1b[m");
+      style(ab, theme_colour(THEME_NORMAL));
     }
   }
   if (!repo->count && height > 2)
-    line(ab, area, 4, repo->root ? " Working tree clean" : " No repository loaded", "\x1b[90m");
+    line(ab, area, 4, repo->root ? " Working tree clean" : " No repository loaded", theme_colour(THEME_MUTED));
 }
 
 static void branches(editor *e, abuf *ab, rect area, int height) {
@@ -92,7 +93,7 @@ static void branches(editor *e, abuf *ab, rect area, int height) {
       snprintf(text, sizeof text, " %s%s", branch->name, branch->remote ? " [remote]" : "");
     }
     line(ab, area, row + 2, text, index == panel->branch_selected ?
-          selected_colour(e) ? "\x1b[97;44m" : "\x1b[30;47m" : "\x1b[m");
+          selected_colour(e) ? theme_colour(THEME_ACTIVE) : theme_colour(THEME_INACTIVE) : theme_colour(THEME_NORMAL));
   }
 }
 
@@ -106,19 +107,19 @@ static int input_column(const git_panel *panel) {
 static void footer(editor *e, abuf *ab, rect area) {
   git_panel *panel = &e->git;
   int height = git_panel_footer_height(e), start = area.height - height;
-  const char *colour = panel->failed ? "\x1b[97;41m" : "\x1b[90m";
+  const char *colour = panel->failed ? theme_colour(THEME_WARNING) : theme_colour(THEME_MUTED);
   if (panel->mode == GIT_MESSAGE || panel->mode == GIT_NEW_BRANCH) {
     if (panel->input_offset > panel->input_cursor)
       panel->input_offset = panel->input_cursor;
     while (input_column(panel) >= area.width - 1 && panel->input_offset < panel->input_cursor)
       panel->input_offset = grapheme_next(panel->input, panel->input_offset);
     line(ab, area, start, panel->mode == GIT_MESSAGE ? " Commit message:" : " New branch name:", "\x1b[1m");
-    line(ab, area, start + 1, panel->input + panel->input_offset, "\x1b[30;47m");
-    line(ab, area, start + 2, "Enter confirm  C-g cancel", "\x1b[90m");
+    line(ab, area, start + 1, panel->input + panel->input_offset, theme_colour(THEME_INACTIVE));
+    line(ab, area, start + 2, "Enter confirm  C-g cancel", theme_colour(THEME_MUTED));
     line(ab, area, start + 3, panel->message, colour);
   } else if (panel->mode != GIT_FILES) {
-    line(ab, area, start, panel->mode == GIT_PICK_MERGE ? "Enter merge  C-g back" : "Enter checkout C-g back", "\x1b[90m");
-    line(ab, area, start + 1, "Up/Down choose branch", "\x1b[90m");
+    line(ab, area, start, panel->mode == GIT_PICK_MERGE ? "Enter merge  C-g back" : "Enter checkout C-g back", theme_colour(THEME_MUTED));
+    line(ab, area, start + 1, "Up/Down choose branch", theme_colour(THEME_MUTED));
     line(ab, area, start + 2, panel->message, colour);
   } else {
     static const char *const bindings[] = {
@@ -127,7 +128,7 @@ static void footer(editor *e, abuf *ab, rect area) {
     };
     line(ab, area, start, panel->message, colour);
     for (int i = 1; i < height; i++)
-      line(ab, area, start + i, bindings[i - 1], "\x1b[90m");
+      line(ab, area, start + i, bindings[i - 1], theme_colour(THEME_MUTED));
   }
 }
 
@@ -141,17 +142,17 @@ void git_panel_draw(editor *e, abuf *ab) {
   char title[96];
   snprintf(title, sizeof title, " GIT%s%s", e->sidebar.focused ? " *" : "",
            panel->action != GIT_IDLE ? "  working..." : "");
-  line(ab, area, 0, title, e->sidebar.focused ? "\x1b[97;44m" : "\x1b[30;47m");
-  line(ab, area, 1, panel->repo.head ? panel->repo.head : "Repository status", "\x1b[36m");
+  line(ab, area, 0, title, e->sidebar.focused ? theme_colour(THEME_ACTIVE) : theme_colour(THEME_INACTIVE));
+  line(ab, area, 1, panel->repo.head ? panel->repo.head : "Repository status", theme_colour(THEME_ACCENT));
   int height = git_panel_list_height(e);
   if (panel->mode == GIT_PICK_CHECKOUT || panel->mode == GIT_PICK_MERGE)
     branches(e, ab, area, height);
   else
     files(e, ab, area, height);
   footer(e, ab, area);
-  style(ab, "\x1b[90m");
+  style(ab, theme_colour(THEME_MUTED));
   screen_fill(ab, (rect){area.width, area.y, 1, area.height}, '|');
-  style(ab, "\x1b[m");
+  style(ab, theme_colour(THEME_NORMAL));
 }
 
 int git_panel_cursor(const editor *e, int *x, int *y) {

@@ -1,0 +1,24 @@
+# Dracula — ANSI 256 colours
+[colors]
+normal = 255, 235
+status = 235, 117
+warning = 231, 160
+selection = 231, 61
+active = 231, 61
+inactive = 255, 238
+muted = 103, 235
+accent = 117, 235
+logo = 226, 235
+popup = 255, 238
+diff_added = 194, 22
+diff_removed = 224, 53
+diff_context = 255, 238
+diff_hunk = 117, 235
+diff_meta = 103, 235
+keyword = 213, 235
+type = 117, 235
+string = 84, 235
+comment = 103, 235
+number = 215, 235
+directive = 213, 235
+function = 117, 235

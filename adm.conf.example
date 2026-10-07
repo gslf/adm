@@ -1,0 +1,17 @@
+# Copy to ~/.adm.conf (or %USERPROFILE%/.adm.conf on Windows).
+# Without this file, adm uses its built-in colours and has no user commands.
+# Paths below are examples: change them to your checkout/install location.
+
+[theme]
+file = ~/DevEnv/adm/themes/nord.theme
+
+# Optional overrides take precedence over the theme file.
+# You can also omit [theme] and put the entire palette here in this one file.
+[colors]
+logo = 226, 236
+
+# Enable after compiling plugins/timestamp.c as described in HELP.md.
+# [command t]
+# label = Insert UTC timestamp
+# library = ~/DevEnv/adm/plugins/timestamp.so
+# function = insert_timestamp

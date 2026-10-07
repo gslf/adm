@@ -49,6 +49,11 @@ n/p        Next / previous diagnostic
 N/f        Rename symbol / format current file
 a/t/?      Automatic startup / syntax colours / LSP help
 
+M-c        User Center (Alt-c or Esc then c)
+Up/Down    Choose a plugin command; Enter or its key runs it
+Esc / C-g  Close User Center; see HELP.md for configuration
+~/.adm.conf  Optional theme and C plugin configuration
+
 Up/Down or PgUp/PgDown scroll; ESC closes this help
 ```
 
@@ -390,3 +395,129 @@ applied. Initialization and interactive requests time out, and server I/O uses
 bounded, nonblocking queues so a server cannot block typing.
 
 See [LANGUAGES.md](LANGUAGES.md) for adding a language adapter to the shared registry.
+
+## Themes and home configuration
+
+adm reads **`~/.adm.conf`** at startup; on Windows it uses
+**`%USERPROFILE%/.adm.conf`** (falling back to `HOME`). No file is required:
+the original built-in colour scheme stays available. Settings are read once;
+restart adm after changing them. `ADM_CONFIG` can select another configuration
+file, useful for a separate profile or testing.
+
+Start with [adm.conf.example](adm.conf.example). To select a preset:
+
+```ini
+[theme]
+file = /absolute/path/to/adm/themes/nord.theme
+```
+
+The [themes](themes) folder contains ten complete ANSI 256-colour palettes:
+midnight, nord, dracula, gruvbox, solarized-dark, solarized-light, monokai,
+ocean, forest and paper. No extended keyboard protocol or true-colour support
+is needed. Your terminal must support 256 colours to display these presets.
+
+Alternatively, copy a preset's `[colors]` section into `~/.adm.conf`: this
+keeps the entire configuration in one file. Colour values are **foreground,
+background**, each an ANSI index `0`–`255` or `default` for the terminal's
+own colour. `[colors]` settings override a selected preset regardless of
+section order. Omitted roles retain their built-in values.
+
+```ini
+[colors]
+normal = 252, 234
+keyword = 177, 234
+status = 234, 110
+```
+
+Available roles: `normal`, `status`, `warning`, `selection`, `active`,
+`inactive`, `muted`, `accent`, `logo`, `popup`, `diff_added`, `diff_removed`,
+`diff_context`, `diff_hunk`, `diff_meta`, `keyword`, `type`, `string`,
+`comment`, `number`, `directive`, `function`. Set every role for a complete
+palette, including the background of syntax colours. Theme files contain
+only `[colors]`; they cannot declare commands or include another theme.
+
+Paths can be absolute, relative to the containing configuration file, or
+start with `~/`. Spaces in paths need no quotes; values are literal, without
+shell expansion. Windows paths can use `/` or `\`. A line beginning with
+`#` or `;` is a comment. CRLF files and a UTF-8 BOM are accepted. Unknown settings, duplicate
+keys, incomplete commands, invalid colours, unreadable themes or oversized
+files reject the **whole configuration**, show an error in the bottom bar
+and restore built-in colours with no user commands. Files are limited to
+64 KiB, individual lines to 4,095 bytes and commands to 64.
+
+## C plugins and User Center
+
+**`M-c`** (Alt-c, or Esc followed by c) opens the **User Center**. Use
+Up/Down or Page Up/Page Down to select a command, then Enter to run it;
+its configured single-character key also runs it directly from the menu.
+Home/End select the first/last command. Esc or C-g closes the menu.
+Commands stay separate from `C-x` and the `M-x` LSP menu. Text-entry prompts
+retain their own keys. With no plugins configured, the center shows a hint.
+
+A plugin is a native shared library containing one or more C functions.
+Register each command in the same home configuration file:
+
+```ini
+[command t]
+label = Insert UTC timestamp
+library = /absolute/path/to/timestamp.so
+function = insert_timestamp
+```
+
+Keys are distinct printable ASCII characters other than space. Each command
+requires `label`, `library` and `function`. A library may provide multiple
+commands. Libraries load on first use and remain loaded until adm exits;
+missing libraries, symbols or incompatible ABI versions report an error
+without editing the document. Load failures can be retried. Configurations
+are never loaded automatically from a workspace.
+
+The public API is [src/adm_plugin.h](src/adm_plugin.h). Each library exports
+`unsigned adm_plugin_version(void)`, returning `ADM_PLUGIN_ABI_VERSION`, and
+configured functions with this signature:
+
+```c
+ADM_PLUGIN_EXPORT int my_command(const adm_plugin_api *api, void *context);
+```
+
+Return `0` for success, another value for failure. Use `api->notice` for a
+message. Check `abi_version` and `struct_size` before using the API. Available
+functions expose the current filename, fixed workspace directory, cursor,
+line count, bounded line reads, range replacement and cursor positioning.
+Positions are zero-based rows and UTF-8 **byte** columns at grapheme
+boundaries. Replacement text uses LF for newlines and cannot contain NUL;
+reads return the full byte length even if the supplied destination truncates
+it. `read_line(context, row, NULL, 0)` can query that length without copying a huge file.
+An empty view has no document and cannot be edited: first open/create a file.
+Read-only Git diffs and files locked by a Git worktree operation also reject
+edits.
+
+Every replacement goes through shared-buffer notifications, syntax/LSP
+updates and undo recording. Other tabs and splits show the same edits.
+All successful replacements during one command form one undo action.
+If a command fails after making edits, those edits remain undoable; command
+execution does not automatically roll them back or save files.
+
+Functions run synchronously on the editor thread. The API, context and
+borrowed strings are valid only during the call: do not retain them, call
+from background threads or install callbacks. Native libraries execute with
+adm's privileges and must be trusted; ABI checks cannot contain crashes,
+infinite loops or memory corruption inside plugin code. Keep commands short
+and avoid copying entire documents when line reads suffice.
+
+[plugins/timestamp.c](plugins/timestamp.c) is a working example. Compile it
+for the same OS and architecture as adm (run these from the repository root):
+
+```sh
+# Linux and other ELF-based POSIX systems
+cc -std=c11 -O2 -fPIC -shared -Isrc plugins/timestamp.c -o plugins/timestamp.so
+
+# macOS
+cc -std=c11 -O2 -dynamiclib -Isrc plugins/timestamp.c -o plugins/timestamp.dylib
+
+# Windows with MinGW
+cc -std=c11 -O2 -shared -Isrc plugins/timestamp.c -o plugins/timestamp.dll
+```
+
+Use the resulting `.so`, `.dylib` or `.dll` path in `[command t]`, restart
+adm and invoke `M-c t`. Undo with C-z and redo with M-z. No link against the
+adm executable or private editor headers is necessary.

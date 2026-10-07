@@ -1,0 +1,24 @@
+# Midnight — ANSI 256 colours
+[colors]
+normal = 252, 234
+status = 234, 110
+warning = 231, 160
+selection = 231, 24
+active = 231, 24
+inactive = 252, 238
+muted = 245, 234
+accent = 110, 234
+logo = 226, 234
+popup = 252, 238
+diff_added = 194, 22
+diff_removed = 224, 52
+diff_context = 252, 238
+diff_hunk = 110, 234
+diff_meta = 245, 234
+keyword = 177, 234
+type = 110, 234
+string = 150, 234
+comment = 245, 234
+number = 173, 234
+directive = 177, 234
+function = 110, 234

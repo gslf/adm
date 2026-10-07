@@ -1,0 +1,24 @@
+# Monokai — ANSI 256 colours
+[colors]
+normal = 231, 235
+status = 235, 81
+warning = 231, 160
+selection = 231, 24
+active = 231, 24
+inactive = 231, 239
+muted = 244, 235
+accent = 81, 235
+logo = 226, 235
+popup = 231, 239
+diff_added = 194, 22
+diff_removed = 224, 52
+diff_context = 231, 239
+diff_hunk = 81, 235
+diff_meta = 244, 235
+keyword = 197, 235
+type = 81, 235
+string = 148, 235
+comment = 244, 235
+number = 141, 235
+directive = 197, 235
+function = 81, 235

@@ -41,13 +41,17 @@ jobs:
           VERSION="${GITHUB_REF_NAME}"
           NAME="adm-${VERSION}-${{ matrix.target }}"
           mkdir -p dist
+          cp -R themes plugins dist/
+          mkdir -p dist/src
+          cp src/adm_plugin.h dist/src/
+          cp adm.conf.example dist/
           if [ -f adm.exe ]; then
             cp adm.exe LICENSE README.md HELP.md LANGUAGES.md dist/
-            cd dist && 7z a "${NAME}.zip" adm.exe LICENSE README.md HELP.md LANGUAGES.md
+            cd dist && 7z a "${NAME}.zip" adm.exe LICENSE README.md HELP.md LANGUAGES.md adm.conf.example themes plugins src
           else
             strip adm
             cp adm LICENSE README.md HELP.md LANGUAGES.md dist/
-            cd dist && tar czf "${NAME}.tar.gz" adm LICENSE README.md HELP.md LANGUAGES.md
+            cd dist && tar czf "${NAME}.tar.gz" adm LICENSE README.md HELP.md LANGUAGES.md adm.conf.example themes plugins src
           fi
 
       - name: Upload artifact

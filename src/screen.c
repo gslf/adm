@@ -1,3 +1,4 @@
+#include "theme.h"
 #include "search.h"
 #include "screen.h"
 #include "cursor.h"
@@ -5,6 +6,7 @@
 #include "path.h"
 #include "syntax.h"
 #include "lsp.h"
+#include "plugins.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,9 +20,9 @@
 #define WRITE write
 #endif
 
-#define SELECT_ON "\x1b[44;97m"
-#define STATUS_COLOURS "\x1b[30;103m"
-#define WARNING_COLOURS "\x1b[97;41m"
+#define SELECT_ON theme_colour(THEME_SELECTION)
+#define STATUS_COLOURS theme_colour(THEME_STATUS)
+#define WARNING_COLOURS theme_colour(THEME_WARNING)
 
 void ab_append(abuf *ab, const char *s, int len) {
   if (len <= 0)
@@ -102,7 +104,7 @@ static void draw_top(const editor *e, abuf *ab) {
   append_str(ab, "\x1b[22m");
   if (e->tab_count > 1) {
     tabs_draw(e, ab, e->cols - used);
-    append_str(ab, "\x1b[m");
+    append_str(ab, theme_colour(THEME_NORMAL));
     return;
   }
   const char *name = !doc ? "[Empty]" : doc->label ? doc->label :
@@ -111,18 +113,18 @@ static void draw_top(const editor *e, abuf *ab) {
            doc && doc->dirty ? " **" : "");
   used += screen_text(ab, text, e->cols - used);
   screen_repeat(ab, ' ', e->cols - used);
-  append_str(ab, "\x1b[m");
+  append_str(ab, theme_colour(THEME_NORMAL));
 }
 
 static const char *row_colours(const document *doc, int row) {
   if (!doc->diff_lines)
-    return "\x1b[m";
+    return theme_colour(THEME_NORMAL);
   switch (doc->diff_lines[row]) {
-  case DIFF_ADDED: return "\x1b[0;38;5;194;48;5;22m";
-  case DIFF_REMOVED: return "\x1b[0;38;5;224;48;5;52m";
-  case DIFF_CONTEXT: return "\x1b[0;38;5;252;48;5;235m";
-  case DIFF_HUNK: return "\x1b[0;36m";
-  default: return "\x1b[0;90m";
+  case DIFF_ADDED: return theme_colour(THEME_DIFF_ADDED);
+  case DIFF_REMOVED: return theme_colour(THEME_DIFF_REMOVED);
+  case DIFF_CONTEXT: return theme_colour(THEME_DIFF_CONTEXT);
+  case DIFF_HUNK: return theme_colour(THEME_DIFF_HUNK);
+  default: return theme_colour(THEME_DIFF_META);
   }
 }
 
@@ -146,7 +148,7 @@ static void draw_row(const view *v, abuf *ab, rect area, int y, int highlight) {
   screen_text(ab, number, area.width);
   int width = area.width - gutter;
   if (width <= 0) {
-    append_str(ab, "\x1b[m");
+    append_str(ab, theme_colour(THEME_NORMAL));
     return;
   }
 
@@ -193,7 +195,7 @@ static void draw_row(const view *v, abuf *ab, rect area, int y, int highlight) {
     j = next;
   }
   if (painted || v->doc->diff_lines || span_count)
-    append_str(ab, "\x1b[m");
+    append_str(ab, theme_colour(THEME_NORMAL));
 }
 
 void screen_empty(abuf *ab, rect area) {
@@ -213,9 +215,9 @@ void screen_empty(abuf *ab, rect area) {
   int y = area.y + (area.height > height + 2 ? (area.height - height - 2) / 2 : 0);
   for (int row = 0; row < height; row++) {
     screen_position(ab, x, y + row);
-    append_str(ab, "\x1b[1;93m");
+    append_str(ab, theme_colour(THEME_LOGO));
     int used = screen_text(ab, large ? mark[row] : "][", area.x + area.width - x);
-    append_str(ab, "\x1b[m");
+    append_str(ab, theme_colour(THEME_NORMAL));
     used += screen_text(ab, large ? "  " : " ", area.x + area.width - x - used);
     screen_text(ab, large ? name[row] : "adm", area.x + area.width - x - used);
   }
@@ -237,10 +239,10 @@ static void draw_pane(editor *e, abuf *ab, view *v, int ordinal) {
              !v->doc ? "[Empty]" : v->doc->label ? v->doc->label : v->doc->filename ? path_name(v->doc->filename) : "[No Name]",
              v->doc && v->doc->dirty ? " **" : "");
     screen_position(ab, v->area.x, v->area.y);
-    append_str(ab, v == e->view ? "\x1b[97;44m" : "\x1b[30;47m");
+    append_str(ab, v == e->view ? theme_colour(THEME_ACTIVE) : theme_colour(THEME_INACTIVE));
     int used = screen_text(ab, title, v->area.width);
     screen_repeat(ab, ' ', v->area.width - used);
-    append_str(ab, "\x1b[m");
+    append_str(ab, theme_colour(THEME_NORMAL));
   }
   rect area = layout_content(e, v);
   if (!v->doc) {
@@ -260,7 +262,7 @@ static void draw_workspace(editor *e, abuf *ab) {
     draw_pane(e, ab, &e->windows.panes[panes[i]], i + 1);
   if (e->windows.compact)
     return;
-  append_str(ab, "\x1b[90m");
+  append_str(ab, theme_colour(THEME_MUTED));
   for (int i = 0; i < MAX_LAYOUT_NODES; i++) {
     const layout_node *n = &e->windows.nodes[i];
     if (!n->used || n->kind == LAYOUT_LEAF)
@@ -277,7 +279,7 @@ static void draw_workspace(editor *e, abuf *ab) {
       screen_fill(ab, separator, '-');
     }
   }
-  append_str(ab, "\x1b[m");
+  append_str(ab, theme_colour(THEME_NORMAL));
 }
 
 static void draw_file_manager(editor *e, abuf *ab) {
@@ -288,10 +290,10 @@ static void draw_file_manager(editor *e, abuf *ab) {
     return;
   file_tree *tree = &e->files.tree;
   screen_position(ab, area.x, area.y);
-  append_str(ab, e->sidebar.focused ? "\x1b[97;44m" : "\x1b[30;47m");
+  append_str(ab, e->sidebar.focused ? theme_colour(THEME_ACTIVE) : theme_colour(THEME_INACTIVE));
   int used = screen_text(ab, e->sidebar.focused ? " FILES *" : " FILES", area.width);
   screen_repeat(ab, ' ', area.width - used);
-  append_str(ab, "\x1b[m");
+  append_str(ab, theme_colour(THEME_NORMAL));
   int height = area.height - 2;
   file_tree_scroll(tree, height);
   for (int row = 0; row < height && tree->offset + row < tree->count; row++) {
@@ -299,7 +301,7 @@ static void draw_file_manager(editor *e, abuf *ab) {
     const tree_entry *entry = &tree->entries[index];
     screen_position(ab, area.x, area.y + row + 1);
     if (index == tree->selected)
-      append_str(ab, e->sidebar.focused ? "\x1b[97;44m" : "\x1b[47;30m");
+      append_str(ab, e->sidebar.focused ? theme_colour(THEME_ACTIVE) : theme_colour(THEME_INACTIVE));
     int indent = entry->depth < area.width / 2 ? entry->depth * 2 : area.width - 2;
     screen_repeat(ab, ' ', indent);
     used = indent;
@@ -307,14 +309,14 @@ static void draw_file_manager(editor *e, abuf *ab) {
                          area.width - used);
     used += screen_text(ab, path_name(entry->path), area.width - used);
     screen_repeat(ab, ' ', area.width - used);
-    append_str(ab, "\x1b[m");
+    append_str(ab, theme_colour(THEME_NORMAL));
   }
   screen_position(ab, area.x, area.y + area.height - 1);
-  append_str(ab, tree->error[0] ? WARNING_COLOURS : "\x1b[90m");
+  append_str(ab, tree->error[0] ? WARNING_COLOURS : theme_colour(THEME_MUTED));
   screen_text(ab, tree->error[0] ? tree->error : "Enter: open  C-l: editor", area.width);
-  append_str(ab, "\x1b[90m");
+  append_str(ab, theme_colour(THEME_MUTED));
   screen_fill(ab, (rect){area.width, area.y, 1, area.height}, '|');
-  append_str(ab, "\x1b[m");
+  append_str(ab, theme_colour(THEME_NORMAL));
 }
 
 static void draw_bottom(editor *e, abuf *ab) {
@@ -346,7 +348,8 @@ static void draw_bottom(editor *e, abuf *ab) {
     if (e->view->doc->readonly)
       used += screen_text(ab, " DIFF ", e->cols - used);
     if ((e->view->sel_mode || e->view->sel_active) && e->cols - used >= 8) {
-      append_str(ab, "\x1b[97;44;1m SELECT \x1b[22m");
+      theme_append(ab, THEME_SELECTION);
+      append_str(ab, "\x1b[1m SELECT \x1b[22m");
       append_str(ab, STATUS_COLOURS);
       used += 8;
     }
@@ -366,7 +369,7 @@ static void draw_bottom(editor *e, abuf *ab) {
   }
   used += screen_text(ab, text, e->cols - used);
   screen_repeat(ab, ' ', e->cols - used);
-  append_str(ab, "\x1b[m");
+  append_str(ab, theme_colour(THEME_NORMAL));
 }
 
 void screen_refresh(editor *e) {
@@ -386,12 +389,12 @@ void screen_refresh(editor *e) {
     screen_position(&ab, prompt_x, prompt_y);
     append_str(&ab, "\x1b[?25h");
   }
-  if (!e->move_active && !e->help_active && !e->prefix_active && !lsp_modal(e) && !e->confirmation &&
+  if (!e->move_active && !e->help_active && !e->prefix_active && !lsp_modal(e) && !plugins_modal(e) && !e->confirmation &&
       (search_cursor(e, &prompt_x, &prompt_y) || new_file_cursor(e, &prompt_x, &prompt_y) || git_panel_cursor(e, &prompt_x, &prompt_y))) {
     screen_position(&ab, prompt_x, prompt_y);
     append_str(&ab, "\x1b[?25h");
   }
-  if (e->view->doc && !search_active(e) && !e->move_active && !e->help_active && !e->new_file.active && !e->prefix_active && !lsp_modal(e) && !e->confirmation && !e->sidebar.focused &&
+  if (e->view->doc && !search_active(e) && !e->move_active && !e->help_active && !e->new_file.active && !e->prefix_active && !lsp_modal(e) && !plugins_modal(e) && !e->confirmation && !e->sidebar.focused &&
       area.width > gutter && area.height > 0) {
     int x = area.x + gutter + cursor_col(e) - e->view->coloff;
     int y = area.y + e->view->cy - e->view->rowoff;
@@ -403,5 +406,6 @@ void screen_refresh(editor *e) {
 }
 
 void screen_clear(void) {
-  WRITE(1, "\x1b[2J\x1b[H", 7);
+  static const char cleanup[] = "\x1b[m\x1b[2J\x1b[H\x1b[?25h";
+  WRITE(1, cleanup, sizeof cleanup - 1);
 }

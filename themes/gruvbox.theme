@@ -1,0 +1,24 @@
+# Gruvbox — ANSI 256 colours
+[colors]
+normal = 223, 235
+status = 235, 109
+warning = 231, 160
+selection = 231, 94
+active = 231, 94
+inactive = 223, 237
+muted = 244, 235
+accent = 109, 235
+logo = 226, 235
+popup = 223, 237
+diff_added = 194, 58
+diff_removed = 224, 52
+diff_context = 223, 237
+diff_hunk = 109, 235
+diff_meta = 244, 235
+keyword = 214, 235
+type = 109, 235
+string = 142, 235
+comment = 244, 235
+number = 208, 235
+directive = 214, 235
+function = 109, 235

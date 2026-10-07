@@ -1,0 +1,24 @@
+# Forest — ANSI 256 colours
+[colors]
+normal = 194, 233
+status = 233, 114
+warning = 231, 160
+selection = 231, 22
+active = 231, 22
+inactive = 194, 234
+muted = 65, 233
+accent = 114, 233
+logo = 226, 233
+popup = 194, 234
+diff_added = 194, 22
+diff_removed = 224, 52
+diff_context = 194, 234
+diff_hunk = 114, 233
+diff_meta = 65, 233
+keyword = 179, 233
+type = 114, 233
+string = 151, 233
+comment = 65, 233
+number = 180, 233
+directive = 179, 233
+function = 114, 233
