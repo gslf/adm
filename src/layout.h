@@ -28,6 +28,7 @@ void layout_init(struct editor *e);
 void layout_shutdown(struct editor *e);
 // Callers confirm first when replacing a dirty document's last view.
 void layout_set_document(struct editor *e, document *doc);
+void layout_bind_view(struct editor *e, view *v, document *doc);
 int layout_has_unsaved(const struct editor *e);
 void layout_arrange(struct editor *e);
 rect layout_content(const struct editor *e, const view *v);
@@ -35,6 +36,7 @@ int layout_order(const struct editor *e, int panes[MAX_PANES]);
 int layout_can_split(const struct editor *e, layout_kind kind);
 int layout_split(struct editor *e, layout_kind kind);
 void layout_focus(struct editor *e, int step);
+void layout_move(struct editor *e, int dx, int dy);
 int layout_can_resize(const struct editor *e, layout_kind kind, int delta);
 int layout_resize(struct editor *e, layout_kind kind, int delta);
 void layout_close(struct editor *e);

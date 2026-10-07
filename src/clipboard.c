@@ -482,31 +482,26 @@ static void clipboard_set(char *text) {
     terminal_clipboard_copy(text);
 }
 
-// Insert text at the cursor, one character at a time. Every flavour of line
-// ending counts as a single break: "\r\n", a lone "\n" and a lone "\r".
-static void insert_text_at_cursor(editor *e, const char *text) {
-  for (int i = 0; text[i] != '\0'; i++) {
-    char c = text[i];
-
-    if (c == '\r' && text[i + 1] == '\n')
-      continue; // skip it, the '\n' right after makes the break
-
-    if (c == '\n' || c == '\r') {
-      // Running out of memory stops the paste but leaves the buffer sound,
-      // with everything inserted so far still in place.
-      if (buffer_insert_newline(&e->view->doc->buf, e->view->cy, e->view->cx) != 0)
-        return;
-
-      e->view->cy++;
-      e->view->cx = 0;
-      continue;
-    }
-
-    if (buffer_insert_char(&e->view->doc->buf, e->view->cy, e->view->cx, c) != 0)
-      return;
-
-    e->view->cx++;
+// Normalize clipboard line endings once and replace the selection atomically.
+static int insert_text_at_cursor(editor *e, const char *text) {
+  size_t size = strlen(text);
+  char *normalized = malloc(size + 1);
+  if (!normalized) return -1;
+  size_t n = 0;
+  for (size_t i = 0; i < size; i++) {
+    if (text[i] == '\r' && text[i + 1] == '\n') continue;
+    normalized[n++] = text[i] == '\r' ? '\n' : text[i];
   }
+  normalized[n] = 0;
+  int sr = e->view->cy, sc = e->view->cx, er = sr, ec = sc;
+  selection_range(e, &sr, &sc, &er, &ec);
+  buffer_edit edit;
+  int result = buffer_replace_span(&e->view->doc->buf, sr, sc, er, ec, normalized, n, &edit);
+  free(normalized);
+  if (result < 0) return -1;
+  e->view->cy = edit.new_row; e->view->cx = edit.new_col;
+  selection_clear(e);
+  return 0;
 }
 
 ///////////////////////////////////
@@ -532,7 +527,7 @@ static void clip_cut(editor *e) {
     return;
 
   clipboard_set(text);
-  selection_delete(e);
+  if (selection_delete(e) < 0) return;
 
   e->view->doc->dirty = 1;
   dispatch_change(e);
@@ -558,14 +553,12 @@ static void clip_paste(editor *e) {
     return;
   }
 
-  // Pasting over a selection replaces it, and pasting at all ends selection
-  // mode, exactly as typing does.
-  if (e->view->sel_active)
-    selection_delete(e);
-  selection_clear(e);
-
-  insert_text_at_cursor(e, text);
-  free(from_system); // the internal register is not ours to free here
+  int result = insert_text_at_cursor(e, text);
+  free(from_system);
+  if (result < 0) {
+    snprintf(e->notice, sizeof e->notice, "Cannot paste; text unchanged");
+    return;
+  }
 
   e->view->doc->dirty = 1;
   cursor_mark_column(e);

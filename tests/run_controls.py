@@ -1,5 +1,7 @@
 """Compile and run control regressions without touching the desktop clipboard."""
 import os
+import json
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -7,6 +9,12 @@ import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parent.parent
+
+help_source = (root / "src" / "navigation.c").read_text().split(
+    "static const char *help_lines[] = {", 1)[1].split("};", 1)[0]
+help_lines = [json.loads(line) for line in re.findall(r'^\s*(".*"),?\s*$', help_source, re.M)]
+help_reference = (root / "HELP.md").read_text().split("```text\n", 1)[1].split("\n```", 1)[0]
+assert "\n".join(help_lines) == help_reference, "HELP.md must match the in-editor help"
 
 
 def git_fixture(parent):
@@ -80,9 +88,11 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
     sources = sorted(p for p in (root / "src").glob("*.c") if p.name != "main.c")
     compiler = shlex.split(os.environ.get("CC", "cc"))
     flags = shlex.split(os.environ.get("CFLAGS", "-std=c11 -Wall -Wextra -O2 -D_DEFAULT_SOURCE"))
-    for suite in ("controls", "splits", "lifecycle", "file_manager", "process", "diff", "git", "git_initial"):
+    if os.name == "posix" and "-pthread" not in flags:
+        flags.append("-pthread")
+    for suite in ("pattern", "search", "undo", "controls", "navigation", "splits", "tabs", "empty_views", "large_files", "lifecycle", "file_manager", "process", "diff", "git", "git_initial"):
         binary = Path(directory) / suite
-        subprocess.run(compiler + flags + ["-I", str(root / "src"), "-o", str(binary),
+        subprocess.run(compiler + flags + (["-DADM_TEST_ALLOC"] if suite == "undo" else []) + ["-I", str(root / "src"), "-o", str(binary),
                                          str(root / "tests" / f"{suite}.c")]
                        + [str(p) for p in sources], check=True)
         environment = dict(os.environ, PATH="")
@@ -110,6 +120,26 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
                 hook.write_text("#!/bin/sh\nprintf 'hook rejected\\n' >&2\nexit 1\n")
                 hook.chmod(0o755)
             argument = working_directory / "alpha.txt"
+        if suite == "search":
+            working_directory = Path(directory) / "search workspace"
+            working_directory.mkdir()
+            (working_directory / "folder").mkdir()
+            (working_directory / ".git").mkdir()
+            (working_directory / "folder" / "nested.txt").write_bytes(b"needle\r\nneedle")
+            (working_directory / ".hidden.txt").write_bytes(b"\xef\xbb\xbfneedle\n")
+            (working_directory / ".git" / "metadata").write_text("needle\n")
+            (working_directory / "unrelated.txt").write_text("nothing\n")
+            (working_directory / "binary.bin").write_bytes(b"needle\n" + b"x" * 65536 + b"\0")
+            if os.name == "posix":
+                (working_directory / "folder" / "loop").symlink_to(working_directory, target_is_directory=True)
+                os.mkfifo(working_directory / "pipe")
+            argument = working_directory / "search.txt"
+        if suite == "empty_views":
+            working_directory = Path(directory) / "empty views"
+            working_directory.mkdir()
+            (working_directory / "folder").mkdir()
+            (working_directory / "existing.txt").write_text("keep\n")
+            argument = working_directory / "absolute.txt"
         if suite == "file_manager":
             working_directory = Path(directory) / "files"
             working_directory.mkdir()
@@ -133,10 +163,13 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
                 working_directory, "log", "--all", "--format=%s")
         print(f"{suite.capitalize()} regressions passed.")
     if os.name == "posix":
-        from terminal import run, run_file_manager, run_git
+        from terminal import run, run_empty, run_file_manager, run_git, run_search, run_undo
         binary = Path(directory) / "adm"
         subprocess.run(compiler + flags + ["-o", str(binary), str(root / "src" / "main.c")]
                        + [str(p) for p in sources], check=True)
         run(binary)
+        run_undo(binary)
+        run_search(binary)
+        run_empty(binary)
         run_file_manager(binary)
         run_git(binary, git_fixture)

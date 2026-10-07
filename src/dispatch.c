@@ -4,6 +4,9 @@
 #include "utf8.h"
 #include "screen.h"
 #include "command_menu.h"
+#include "navigation.h"
+#include "search.h"
+#include "undo.h"
 
 #include <stdio.h>
 
@@ -67,36 +70,17 @@ void dispatch_confirm_with_cancel(editor *e, command action, command cancel,
 
 // Command - SAVE
 static void cmd_save(editor *e) {
-  if (!e->view->doc->filename || !documents_editable(e))
+  if (!documents_editable(e) || !e->view->doc->filename)
     return; 
 
-  // Serialize the focused document.
-  size_t total = 0;
-  for (block *k = e->view->doc->buf.head; k; k = k->next)
-    for (int i = 0; i < k->count; i++)
-      total += strlen(k->lines[i]) + 1;
-
-  char *text = malloc(total + 1);
-  if (!text)
-    return;
-
-  size_t pos = 0;
-  for (block *k = e->view->doc->buf.head; k; k = k->next)
-    for (int i = 0; i < k->count; i++) {
-      size_t len = strlen(k->lines[i]);
-      memcpy(text + pos, k->lines[i], len);
-      pos += len;
-      text[pos++] = '\n';
-    }
-  text[pos] = '\0';
-
-  if (file_write(e->view->doc->filename, text) == 0) {
+  if (file_write_buffer(e->view->doc->filename, &e->view->doc->buf) == 0) {
+    e->notice[0] = '\0';
     e->view->doc->dirty = 0;
+    undo_saved(e->view->doc);
     if (e->sidebar.kind == SIDEBAR_GIT)
       git_panel_refresh(e);
-  }
-
-  free(text);
+  } else
+    snprintf(e->notice, sizeof e->notice, "Save failed; buffer still unsaved");
 }
 
 // Remove the active selection, if there is one. Returns 1 if it removed
@@ -105,7 +89,7 @@ static int drop_selection(editor *e) {
   if (!e->view->sel_active)
     return 0;
 
-  selection_delete(e);
+  if (selection_delete(e) < 0) return -1;
   e->view->doc->dirty = 1;
   dispatch_change(e);
   return 1;
@@ -222,7 +206,12 @@ void dispatch_bind_prefix(int key, command cmd, const char *keys,
 
 void dispatch_bind_prefix_global(int key, command cmd, const char *keys,
                                  const char *label) {
-  dispatch_bind_prefix(key, cmd, keys, label);
+  dispatch_bind_prefix_global_when(key, cmd, keys, label, NULL);
+}
+
+void dispatch_bind_prefix_global_when(int key, command cmd, const char *keys,
+                                      const char *label, command_condition when) {
+  dispatch_bind_prefix_when(key, cmd, keys, label, when);
   for (int i = 0; i < nprefix; i++)
     if (prefix_entries[i].key == key)
       prefix_entries[i].preserve_focus = 1;
@@ -254,6 +243,8 @@ const command_binding *dispatch_prefix_find(const editor *e, int key) {
 }
 
 void dispatch_register(module *m) {
+  for (int i = 0; i < nmods; i++)
+    if (mods[i] == m) return;
   if (nmods < MAX_MODULES)
     mods[nmods++] = m;
 }
@@ -262,6 +253,7 @@ void dispatch_init(editor *e) {
   memset(cmds, 0, sizeof cmds);
   nprefix = 0;
   e->prefix_active = e->prefix_scroll = 0;
+  e->move_active = e->help_active = e->help_scroll = 0;
   e->confirmation = NULL;
   e->confirmation_cancel = NULL;
   e->confirmation_prompt = NULL;
@@ -284,9 +276,6 @@ void dispatch_init(editor *e) {
   dispatch_bind(KEY_END,              cursor_end);
 
   // Emacs movement and editing, with terminal navigation keys as aliases.
-  dispatch_bind(CTRL('p'), cursor_up);
-  dispatch_bind(CTRL('n'), cursor_down);
-  dispatch_bind(CTRL('b'), cursor_left);
   dispatch_bind(CTRL('f'), cursor_right);
   dispatch_bind(META('b'), cursor_word_left);
   dispatch_bind(META('f'), cursor_word_right);
@@ -299,75 +288,63 @@ void dispatch_init(editor *e) {
   dispatch_bind(KEY_CTRL_HOME, cursor_file_start);
   dispatch_bind(KEY_CTRL_END, cursor_file_end);
   dispatch_bind(CTRL('d'), cmd_delete);
-  dispatch_bind(CTRL('h'), cmd_backspace);
   dispatch_bind(CTRL(' '), cursor_select_toggle);
   dispatch_bind(CTRL('g'), selection_clear);
   dispatch_bind('\x1b', selection_clear);
 
   dispatch_bind_prefix(CTRL('s'), cmd_save, "C-s", "Save");
   dispatch_bind_prefix(CTRL('c'), cmd_quit, "C-c", "Quit");
-  dispatch_bind_prefix('l', cursor_screen_bottom, "l", "Last visible line");
 
+  dispatch_register(undo_module());
   // Module init hooks.
   for (int i = 0; i < nmods; i++)
     if (mods[i]->init)
       mods[i]->init(e);
   layout_bindings();
+  tabs_bindings();
   file_manager_bindings();
   git_panel_bindings();
-  sidebar_bindings();
+  new_file_bindings();
+  navigation_bindings();
 }
 
 // Default text input
 static void edit_key(editor *e, int key) {
-  if (!documents_editable(e))
-    return;
-  int text = (key >= 32 && key < KEY_SPECIAL && key != KEY_BACKSPACE);
-
-  // Not an editing key
-  if (key != '\r' && key != '\n' && !text)
-    return;
-
-  // Typing over a selection replaces it, and either way it ends selection
-  // mode: the anchor left behind would silently grab whatever the cursor
-  // walks over next.
-  drop_selection(e);
-  selection_clear(e);
-
-  // Enter
-  if (key == '\r' || key == '\n') {
-    if (buffer_insert_newline(&e->view->doc->buf, e->view->cy, e->view->cx) == 0) {
-      e->view->cy++;
-      e->view->cx = 0;
-      e->view->doc->dirty = 1;
-      cursor_mark_column(e);
-      dispatch_change(e);
-    }
-    return;
-  }
-
-  // Characters to add, encoded back into UTF-8 bytes
+  if (!documents_editable(e)) return;
+  int text = key >= 32 && key < KEY_SPECIAL && key != KEY_BACKSPACE;
+  if (key != '\r' && key != '\n' && !text) return;
   char seq[4];
-  int n = utf8_encode(key, seq);
-  if (n == 0)
-    return; // nothing this key could turn into
-
-  for (int i = 0; i < n; i++)
-    if (buffer_insert_char(&e->view->doc->buf, e->view->cy, e->view->cx + i, seq[i]) != 0) {
-      // Take back the bytes that did go in: half a sequence is not a
-      // character, and it would break every offset on the line.
-      while (i-- > 0)
-        buffer_delete_char(&e->view->doc->buf, e->view->cy, e->view->cx);
-      return;
-    }
-  e->view->cx += n;
+  int n;
+  if (key == '\r' || key == '\n') { seq[0] = '\n'; n = 1; }
+  else if (!(n = utf8_encode(key, seq))) return;
+  int sr, sc, er, ec;
+  if (selection_range(e, &sr, &sc, &er, &ec)) {
+    buffer_edit edit;
+    if (buffer_replace_span(&e->view->doc->buf, sr, sc, er, ec, seq, (size_t)n, &edit) < 0) return;
+    e->view->cy = edit.new_row; e->view->cx = edit.new_col;
+  } else if (seq[0] == '\n' && n == 1) {
+    if (buffer_insert_newline(&e->view->doc->buf, e->view->cy, e->view->cx) < 0) return;
+    e->view->cy++; e->view->cx = 0;
+  } else {
+    char terminated[5]; memcpy(terminated, seq, (size_t)n); terminated[n] = 0;
+    if (buffer_replace_range(&e->view->doc->buf, e->view->cy, e->view->cx, 0, terminated) < 0) return;
+    e->view->cx += n;
+  }
+  selection_clear(e);
   e->view->doc->dirty = 1;
   cursor_mark_column(e);
   dispatch_change(e);
 }
 
-void dispatch_key(editor *e, int key) {
+static int creation_key(int key) {
+  return key == CTRL('q') || key == CTRL('u') || key == CTRL('t');
+}
+
+static void dispatch_key_impl(editor *e, int key) {
   if (key == KEY_NONE)
+    return;
+  e->notice[0] = '\0';
+  if (new_file_key(e, key))
     return;
 
   // A confirmation consumes its answer before commands or text can see it.
@@ -385,6 +362,14 @@ void dispatch_key(editor *e, int key) {
   }
 
   int slot = key_slot(key);
+  if (e->move_active && !e->help_active && creation_key(key)) {
+    if (cmds[slot])
+      cmds[slot](e);
+    return;
+  }
+  if (navigation_modal_key(e, key))
+    return;
+
   if (e->prefix_active) {
     // Repeating the prefix leaves the menu open without inserting text.
     if (key == CTRL('x'))
@@ -412,16 +397,23 @@ void dispatch_key(editor *e, int key) {
     return;
   }
 
-  if (e->sidebar.focused && key != CTRL('x')) {
-    sidebar_key(e, key);
-    return;
-  }
-
   // An active prompt owns its keys, including C-g for cancellation.
   for (int i = 0; i < nmods; i++)
     if (mods[i]->on_key && mods[i]->on_key(e, key)) {
       return;
     }
+
+  if (navigation_quick_key(key) || creation_key(key)) {
+    command cmd = cmds[slot];
+    if (cmd)
+      cmd(e);
+    return;
+  }
+
+  if (e->sidebar.focused && key != CTRL('x')) {
+    sidebar_key(e, key);
+    return;
+  }
 
   if (key == CTRL('x')) {
     e->prefix_active = 1;
@@ -434,6 +426,13 @@ void dispatch_key(editor *e, int key) {
     cmd(e);
   else
     edit_key(e, key);
+}
+
+void dispatch_key(editor *e, int key) {
+  if (key == KEY_NONE) return;
+  undo_begin(e, key);
+  dispatch_key_impl(e, key);
+  undo_end(e);
 }
 
 // Format a direct key from its registry slot using the same C-/M- notation
@@ -495,6 +494,8 @@ void dispatch_draw(editor *e, struct abuf *ab) {
       mods[i]->on_draw(e, ab);
   if (e->prefix_active)
     command_menu_draw(e, ab);
+  new_file_draw(e, ab);
+  navigation_draw(e, ab);
 }
 
 void dispatch_change(editor *e) {
@@ -511,11 +512,13 @@ void dispatch_shutdown(editor *e) {
   file_manager_shutdown(e);
   git_panel_shutdown(e);
   documents_shutdown(e);
+  new_file_shutdown(e);
   layout_shutdown(e);
 }
 
 void dispatch_tick(editor *e) {
   git_panel_tick(e);
+  search_tick(e);
 }
 
 // Modifier keys held down together with a special key. The terminal reports

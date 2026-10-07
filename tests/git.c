@@ -1,3 +1,4 @@
+#include "shared_views.h"
 #include "clipboard.h"
 #include "dispatch.h"
 #include "fileio.h"
@@ -28,17 +29,14 @@ static void settle(editor *e) {
 }
 
 static void prefix(editor *e, int key) {
-  dispatch_key(e, CTRL('x'));
-  assert(e->prefix_active);
-  dispatch_key(e, key);
-  assert(!e->prefix_active);
+  test_prefix_shared(e, key);
 }
 
 static void focus(editor *e) {
   if (e->sidebar.kind != SIDEBAR_GIT)
-    prefix(e, 'v');
+    sidebar_toggle(e, SIDEBAR_GIT);
   if (!e->sidebar.focused)
-    prefix(e, 'f');
+    sidebar_focus(e);
   settle(e);
   assert(e->sidebar.kind == SIDEBAR_GIT && e->sidebar.focused);
 }
@@ -57,7 +55,7 @@ static void select_file(editor *e, const char *path, git_section section) {
   int target = find(e, path, section);
   assert(target >= 0);
   while (e->git.selected != target)
-    dispatch_key(e, e->git.selected < target ? CTRL('n') : CTRL('p'));
+    dispatch_key(e, e->git.selected < target ? KEY_DOWN : KEY_UP);
 }
 
 static void type(editor *e, const char *text) {
@@ -111,42 +109,69 @@ int main(int argc, char **argv) {
   dispatch_register(clipboard_module());
   dispatch_register(search_module());
   dispatch_init(&e);
-  assert(dispatch_prefix_find(&e, 'v') && dispatch_prefix_find(&e, 'f'));
+  assert(dispatch_prefix_find(&e, 'g') && dispatch_prefix_find(&e, 'f'));
   assert(!dispatch_prefix_find(&e, 'V'));
-  prefix(&e, 't');
+  sidebar_toggle(&e, SIDEBAR_FILES);
   view *target = e.view;
-  prefix(&e, 'v');
+  sidebar_toggle(&e, SIDEBAR_GIT);
   assert(e.sidebar.kind == SIDEBAR_GIT && !file_manager_area(&e).width && e.view == target);
   assert(e.sidebar.focused && e.windows.active == 0);
   settle(&e);
   assert(e.git.repo.root && e.git.repo.staged == 2 && e.git.repo.unstaged >= 5);
   assert(!e.git.failed && !strncmp(e.git.repo.head, "main", 4));
-  prefix(&e, 'f');
+  sidebar_focus(&e);
   assert(e.sidebar.kind == SIDEBAR_GIT && !e.sidebar.focused && e.view == target);
-  prefix(&e, 'f');
+  sidebar_focus(&e);
   settle(&e);
   assert(e.sidebar.kind == SIDEBAR_GIT && e.sidebar.focused && e.view == target);
-  prefix(&e, '3');
-  prefix(&e, 'o');
+  prefix(&e, 'u');
+  e.sidebar.focused = 0;
+  layout_focus(&e, 1);
   select_file(&e, "dual.txt", GIT_STAGED);
   int pane = e.windows.active;
   dispatch_key(&e, '\r');
   assert(e.git.action == GIT_DIFF && e.windows.count == 2 && !e.view->doc->readonly);
-  prefix(&e, 'o'); // The diff retains the pane selected when the job was launched.
+  e.sidebar.focused = 0;
+  layout_focus(&e, 1); // The diff retains the pane selected when the job was launched.
   settle(&e);
   assert(e.windows.active == pane && e.view->doc->readonly && !e.sidebar.focused);
   int lines = e.view->doc->buf.nlines;
   dispatch_key(&e, 'X');
   dispatch_key(&e, CTRL('d'));
-  dispatch_key(&e, CTRL('h'));
+  dispatch_key(&e, KEY_BACKSPACE);
   dispatch_key(&e, CTRL('y'));
   dispatch_key(&e, CTRL(' '));
-  dispatch_key(&e, CTRL('n'));
+  dispatch_key(&e, KEY_DOWN);
   dispatch_key(&e, CTRL('w'));
   assert(!e.view->doc->dirty && e.view->doc->buf.nlines == lines);
   prefix(&e, CTRL('s'));
   assert(e.view->doc->readonly && !e.view->doc->filename);
-  prefix(&e, 'o');
+  // A diff completing after a tab switch updates its original tab only.
+  select_file(&e, "dual.txt", GIT_STAGED);
+  unsigned long original_tab = e.active_tab->id;
+  document *original_diff = e.view->doc;
+  dispatch_key(&e, '\r');
+  assert(e.git.action == GIT_DIFF);
+  prefix(&e, 't');
+  unsigned long temporary_tab = e.active_tab->id;
+  settle(&e);
+  assert(e.active_tab->id == temporary_tab && e.view->doc == original_diff);
+  workspace *origin = tabs_workspace(&e, tabs_find(&e, original_tab));
+  assert(origin->panes[pane].doc != original_diff && origin->panes[pane].doc->readonly);
+  prefix(&e, 'k');
+  assert(e.active_tab->id == original_tab && e.tab_count == 1 && e.windows.active == pane);
+  // Closing a requested tab makes a late job harmless, even if its pane index is reused.
+  prefix(&e, 't');
+  select_file(&e, "dual.txt", GIT_STAGED);
+  dispatch_key(&e, '\r');
+  assert(e.git.action == GIT_DIFF);
+  prefix(&e, 'k');
+  document *survivor = e.view->doc;
+  settle(&e);
+  assert(e.active_tab->id == original_tab && e.view->doc == survivor && e.git.failed);
+  assert(strstr(e.git.message, "target split changed"));
+  e.sidebar.focused = 0;
+  layout_focus(&e, 1);
   dispatch_key(&e, 'Q');
   document *dirty = e.view->doc;
   select_file(&e, "dual.txt", GIT_UNSTAGED);
@@ -192,7 +217,7 @@ int main(int argc, char **argv) {
   type(&e, "Add tests $(touch should-not-exist) 'quotes' è");
   dispatch_key(&e, CTRL('a'));
   dispatch_key(&e, 'X');
-  dispatch_key(&e, CTRL('h'));
+  dispatch_key(&e, KEY_BACKSPACE);
   dispatch_key(&e, CTRL('e'));
   assert(strstr(e.git.input, "è"));
   dispatch_key(&e, '\r');
@@ -201,9 +226,9 @@ int main(int argc, char **argv) {
   assert(!file_read("should-not-exist"));
 
   // Open alpha from the tree, then verify checkout reloads its existing document.
-  prefix(&e, 't');
+  sidebar_toggle(&e, SIDEBAR_FILES);
   if (!e.sidebar.focused)
-    prefix(&e, 'f');
+    sidebar_focus(&e);
   int index = -1;
   for (int i = 0; i < e.files.tree.count; i++)
     if (strstr(e.files.tree.entries[i].path, "/alpha.txt"))
@@ -228,11 +253,13 @@ int main(int argc, char **argv) {
   type(&e, "Save buffer change");
   dispatch_key(&e, '\r');
   settle(&e);
-  prefix(&e, 'o');
+  e.sidebar.focused = 0;
+  layout_focus(&e, 1);
   documents_open(&e, "vanishing.txt", NULL);
   document *vanishing = e.view->doc;
   assert(!vanishing->readonly);
-  prefix(&e, 'o');
+  e.sidebar.focused = 0;
+  layout_focus(&e, 1);
   branch(&e, 0, "feature");
   assert(!e.git.failed && !strncmp(e.git.repo.head, "feature", 7));
   assert(alpha == e.view->doc && !strcmp(buffer_line(&alpha->buf, 0), "feature"));
@@ -289,25 +316,25 @@ int main(int argc, char **argv) {
   assert(!e.git.failed && !strncmp(e.git.repo.head, "panel-branch", 12));
   target = e.view;
   int active = e.windows.active;
-  prefix(&e, 'v');
+  sidebar_toggle(&e, SIDEBAR_GIT);
   assert(e.sidebar.kind == SIDEBAR_NONE && e.sidebar.last == SIDEBAR_GIT);
   assert(!e.sidebar.focused);
-  prefix(&e, 'v');
+  sidebar_toggle(&e, SIDEBAR_GIT);
   settle(&e);
   assert(e.sidebar.kind == SIDEBAR_GIT && e.sidebar.focused);
   assert(e.view == target && e.windows.active == active && e.windows.count == 2);
-  prefix(&e, 'v');
-  prefix(&e, 'f');
+  sidebar_toggle(&e, SIDEBAR_GIT);
+  sidebar_focus(&e);
   settle(&e);
   assert(e.sidebar.kind == SIDEBAR_GIT && e.sidebar.focused);
   assert(e.view == target && e.windows.active == active && e.windows.count == 2);
-  prefix(&e, 't');
+  sidebar_toggle(&e, SIDEBAR_FILES);
   assert(e.sidebar.kind == SIDEBAR_FILES && e.sidebar.focused);
-  prefix(&e, 't');
+  sidebar_toggle(&e, SIDEBAR_FILES);
   assert(e.sidebar.kind == SIDEBAR_NONE && e.sidebar.last == SIDEBAR_FILES);
-  prefix(&e, 'f');
+  sidebar_focus(&e);
   assert(e.sidebar.kind == SIDEBAR_FILES && e.sidebar.focused && e.view == target);
-  prefix(&e, 'v');
+  sidebar_toggle(&e, SIDEBAR_GIT);
   settle(&e);
   assert(e.sidebar.kind == SIDEBAR_GIT && e.sidebar.focused);
   e.cols = 20;

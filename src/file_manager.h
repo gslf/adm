@@ -6,6 +6,7 @@
 
 typedef struct file_manager {
   file_tree tree;
+  char *workspace_root;
 } file_manager;
 
 struct editor;

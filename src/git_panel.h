@@ -21,7 +21,7 @@ typedef struct git_panel {
   int selected, offset, branch_selected, branch_offset;
   int failed, diff_untracked, diff_pane;
   git_section diff_section;
-  unsigned long diff_revision;
+  unsigned long diff_revision, diff_tab_id;
   char *action_path;
   char input[2048];
   int input_length, input_cursor, input_offset;

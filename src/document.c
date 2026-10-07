@@ -1,5 +1,6 @@
 #include "document.h"
 #include "path.h"
+#include "undo.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -8,7 +9,7 @@
 #include <sys/stat.h>
 
 const char *document_name(const document *doc) {
-  return doc->label ? doc->label : doc->filename ? doc->filename : "[No Name]";
+  return !doc ? "[Empty]" : doc->label ? doc->label : doc->filename ? doc->filename : "[No Name]";
 }
 
 document *document_preview(const char *title, const char *text) {
@@ -64,6 +65,14 @@ document *document_open(const char *path) {
 int document_matches(const document *doc, const char *path) {
   if (!doc || !doc->filename)
     return 0;
+  if (!strcmp(doc->filename, path))
+    return 1;
+#ifndef _WIN32
+  struct stat left_info, right_info;
+  if (stat(doc->filename, &left_info) == 0 && stat(path, &right_info) == 0 &&
+      left_info.st_dev == right_info.st_dev && left_info.st_ino == right_info.st_ino)
+    return 1;
+#endif
   char *left = path_absolute(doc->filename), *right = path_absolute(path);
   int match = left && right &&
 #ifdef _WIN32
@@ -88,15 +97,18 @@ void document_release(document *doc) {
   assert(doc->views > 0);
   if (--doc->views > 0)
     return;
+  undo_clear(doc);
   buffer_free(&doc->buf);
   free(doc->diff_lines);
   doc->diff_lines = NULL;
-  if (doc->allocated) {
+  if (doc->allocated || doc->owns_filename)
     free((char *)doc->filename);
+  if (doc->allocated) {
     free(doc->label);
     free(doc);
     return;
   }
   doc->filename = NULL;
+  doc->owns_filename = 0;
   doc->dirty = 0;
 }

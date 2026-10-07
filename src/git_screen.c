@@ -123,7 +123,7 @@ static void footer(editor *e, abuf *ab, rect area) {
   } else {
     static const char *const bindings[] = {
       "Enter diff   o open", "s/u stage/unstage", "S/U stage/unstage all",
-      "c commit    r refresh", "p/P pull/push", "b checkout  m merge", "C-g editor"
+      "c commit    r refresh", "p/P pull/push", "b checkout  m merge", "C-l editor"
     };
     line(ab, area, start, panel->message, colour);
     for (int i = 1; i < height; i++)

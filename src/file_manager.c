@@ -1,15 +1,17 @@
 #include "file_manager.h"
 #include "dispatch.h"
 #include "path.h"
+#include "search.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 
 void file_manager_init(editor *e) {
-  e->files = (file_manager){0};
+  e->files = (file_manager){.workspace_root = path_current_directory()};
 }
 
 void file_manager_shutdown(editor *e) {
+  free(e->files.workspace_root);
   file_tree_free(&e->files.tree);
   e->files = (file_manager){0};
 }
@@ -24,16 +26,15 @@ rect file_manager_area(const editor *e) {
 void file_manager_refresh(editor *e) {
   file_tree *tree = &e->files.tree;
   file_tree_free(tree);
-  char *root = path_current_directory();
+  const char *root = e->files.workspace_root;
   if (root) {
     file_tree_init(tree, root);
-    free(root);
   } else
     snprintf(tree->error, sizeof tree->error, "Cannot find current directory");
 }
 
-static void toggle(editor *e) {
-  sidebar_toggle(e, SIDEBAR_FILES);
+static void open_panel(editor *e) {
+  sidebar_show(e, SIDEBAR_FILES);
 }
 
 static void opened(editor *e, int result) {
@@ -59,14 +60,16 @@ static void activate(editor *e) {
 }
 
 void file_manager_key(editor *e, int key) {
+  if (search_files_key(e, key))
+    return;
   file_tree *tree = &e->files.tree;
   const tree_entry *entry = file_tree_selected(tree);
   int page = file_manager_area(e).height - 2;
   if (page < 1)
     page = 1;
   switch (key) {
-  case KEY_UP: case CTRL('p'): file_tree_move(tree, -1); break;
-  case KEY_DOWN: case CTRL('n'): file_tree_move(tree, 1); break;
+  case KEY_UP: file_tree_move(tree, -1); break;
+  case KEY_DOWN: file_tree_move(tree, 1); break;
   case KEY_PGUP: case META('v'): file_tree_move(tree, -page); break;
   case KEY_PGDOWN: case CTRL('v'): file_tree_move(tree, page); break;
   case KEY_HOME: case KEY_CTRL_HOME: case META('<'):
@@ -82,7 +85,7 @@ void file_manager_key(editor *e, int key) {
         file_tree_move(tree, 1);
     }
     break;
-  case KEY_LEFT: case CTRL('b'):
+  case KEY_LEFT:
     if (entry && entry->expanded)
       file_tree_collapse(tree);
     else
@@ -95,5 +98,5 @@ void file_manager_key(editor *e, int key) {
 }
 
 void file_manager_bindings(void) {
-  dispatch_bind_prefix_global('t', toggle, "t", "Toggle file manager");
+  dispatch_bind_prefix_global('f', open_panel, "f", "Open File Explorer");
 }

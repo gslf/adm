@@ -9,7 +9,7 @@ void view_bind_document(view *v, document *doc) {
   document_retain(doc);
   document_release(v->doc);
   rect area = v->area;
-  *v = (view){.doc = doc, .area = area};
+  *v = (view){.used = 1, .doc = doc, .area = area};
 }
 
 void view_dispose(view *v) {
@@ -65,6 +65,8 @@ static void clamp_position(const buffer *b, int *row, int *col) {
 }
 
 void view_clamp(view *v) {
+  if (!v->doc)
+    return;
   const buffer *b = &v->doc->buf;
   int row = v->cy, col = v->cx;
   clamp_position(b, &v->cy, &v->cx);

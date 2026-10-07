@@ -10,40 +10,40 @@ static const command_binding *partner(const editor *e, const command_binding *en
   const command_binding *other = dispatch_prefix_find(e, entry->pair_key);
   return other && other->pair_key == entry->key &&
          other->pair_primary == entry->pair_primary && other->pair_label &&
-         !!other->when == !!entry->when ? other : NULL;
+         (other->key < 32) == (entry->key < 32) ? other : NULL;
 }
 
 static int secondary(const editor *e, const command_binding *entry) {
   return partner(e, entry) && entry->key != entry->pair_primary;
 }
 
-static int section_count(const editor *e, int contextual) {
+static int section_count(const editor *e, int control) {
   int rows = 0, count = dispatch_prefix_count(e);
   for (int i = 0; i < count; i++) {
     const command_binding *entry = dispatch_prefix_at(e, i);
-    rows += !!entry->when == contextual && !secondary(e, entry);
+    rows += (entry->key < 32) == control && !secondary(e, entry);
   }
   return rows;
 }
 
 int command_menu_count(const editor *e) {
-  int standard = section_count(e, 0), contextual = section_count(e, 1);
-  return standard + contextual + (standard > 0 && contextual > 0);
+  int plain = section_count(e, 0), control = section_count(e, 1);
+  return plain + control + (plain > 0 && control > 0);
 }
 
-// Conditional commands form a separate section, independent of registration order.
+// Plain suffixes precede Ctrl suffixes, with a blank row between the groups.
 static const command_binding *menu_entry(const editor *e, int row) {
-  int standard = section_count(e, 0), contextual = section_count(e, 1);
-  int section = row >= standard;
+  int plain = section_count(e, 0), control = section_count(e, 1);
+  int section = row >= plain;
   if (section) {
-    row -= standard;
-    if (standard > 0 && contextual > 0 && row-- == 0)
+    row -= plain;
+    if (plain > 0 && control > 0 && row-- == 0)
       return NULL;
   }
   int count = dispatch_prefix_count(e);
   for (int i = 0; i < count; i++) {
     const command_binding *entry = dispatch_prefix_at(e, i);
-    if (!!entry->when == section && !secondary(e, entry) && row-- == 0)
+    if ((entry->key < 32) == section && !secondary(e, entry) && row-- == 0)
       return entry;
   }
   return NULL;

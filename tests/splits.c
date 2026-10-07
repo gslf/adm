@@ -1,3 +1,4 @@
+#include "shared_views.h"
 #include "clipboard.h"
 #include "command_menu.h"
 #include "cursor.h"
@@ -11,13 +12,11 @@
 
 static void type(editor *e, const char *text) {
   while (*text)
-    dispatch_key(e, (unsigned char)*text++);
+    dispatch_key(e, *text == '\n' ? (++text, '\r') : (unsigned char)*text++);
 }
 
 static void command_key(editor *e, int key) {
-  dispatch_key(e, CTRL('x'));
-  dispatch_key(e, key);
-  assert(!e->prefix_active);
+  test_prefix_shared(e, key);
 }
 
 static int listed(editor *e, int key) {
@@ -26,6 +25,63 @@ static int listed(editor *e, int key) {
     if (dispatch_prefix_at(e, i)->key == key)
       return 1;
   return 0;
+}
+
+static void sidebar_resizing(editor *e) {
+  int cols = e->cols, rows = e->rows, ratios[MAX_LAYOUT_NODES];
+  int active = e->windows.active;
+  view *selected = e->view;
+  for (int i = 0; i < MAX_LAYOUT_NODES; i++)
+    ratios[i] = e->windows.nodes[i].ratio;
+  e->cols = 120;
+  e->rows = 32;
+  for (sidebar_kind kind = SIDEBAR_FILES; kind <= SIDEBAR_GIT; kind++) {
+    e->sidebar.width = 0;
+    sidebar_show(e, kind);
+    int width = sidebar_area(e).width;
+    assert(e->sidebar.focused && listed(e, '}') && listed(e, '{'));
+    command_key(e, '}');
+    assert(sidebar_area(e).width == width + 2 && e->sidebar.focused);
+    command_key(e, '{');
+    assert(sidebar_area(e).width == width && e->sidebar.focused);
+    while (listed(e, '}'))
+      command_key(e, '}');
+    assert(sidebar_area(e).width == e->cols - 13 && e->sidebar.focused);
+    // A hidden command at the sidebar limit must not resize the last split.
+    dispatch_key(e, CTRL('x'));
+    dispatch_key(e, '}');
+    assert(e->prefix_active && e->sidebar.focused);
+    dispatch_key(e, '\x1b');
+    int chosen = e->sidebar.width;
+    sidebar_show(e, kind == SIDEBAR_FILES ? SIDEBAR_GIT : SIDEBAR_FILES);
+    assert(sidebar_area(e).width == chosen && e->sidebar.focused);
+    sidebar_show(e, kind);
+    e->cols = 50;
+    layout_arrange(e);
+    assert(sidebar_area(e).width == 37 && e->sidebar.width == chosen);
+    e->cols = 29;
+    layout_arrange(e);
+    assert(!sidebar_area(e).width && !e->sidebar.focused);
+    e->cols = 120;
+    sidebar_show(e, kind);
+    assert(sidebar_area(e).width == chosen && e->sidebar.focused);
+    sidebar_toggle(e, kind);
+    assert(!sidebar_area(e).width);
+    sidebar_show(e, kind);
+    assert(sidebar_area(e).width == chosen);
+    while (listed(e, '{'))
+      command_key(e, '{');
+    assert(sidebar_area(e).width == 10 && e->sidebar.focused);
+    assert(listed(e, '}') && !listed(e, '{'));
+    assert(e->windows.active == active && e->view == selected);
+    for (int i = 0; i < MAX_LAYOUT_NODES; i++)
+      assert(e->windows.nodes[i].ratio == ratios[i]);
+  }
+  e->sidebar.kind = SIDEBAR_NONE;
+  e->sidebar.focused = e->sidebar.width = 0;
+  e->cols = cols;
+  e->rows = rows;
+  layout_arrange(e);
 }
 
 static int validate_node(const workspace *w, int index, int parent, int *seen) {
@@ -95,47 +151,49 @@ int main(int argc, char **argv) {
   dispatch_init(&e);
   type(&e, "abc\ndef\nghi");
   dispatch_key(&e, META('<'));
-  assert(listed(&e, '2') && listed(&e, '3'));
-  const char *contextual = "oO][}{01";
+  assert(listed(&e, 'q') && listed(&e, 'u'));
+  const char *contextual = "][}{c";
   for (const char *key = contextual; *key; key++)
     assert(!listed(&e, *key));
-  command_key(&e, '2');
+  sidebar_resizing(&e); // Commands also work with just one editor split.
+  command_key(&e, 'q');
   assert(e.windows.count == 2);
   validate(&e);
-  assert(listed(&e, 'o') && listed(&e, ']') && !listed(&e, '}'));
+  assert(listed(&e, 'c') && listed(&e, ']') && !listed(&e, '}'));
   int original = e.windows.active;
   int height = e.view->area.height;
   command_key(&e, ']');
   assert(e.view->area.height == height + 1);
   command_key(&e, '[');
   assert(e.view->area.height == height);
-  dispatch_key(&e, CTRL('n'));
+  dispatch_key(&e, KEY_DOWN);
   dispatch_key(&e, CTRL('f'));
   assert(e.view->cy == 1 && e.view->cx == 1);
-  command_key(&e, 'o');
+  layout_focus(&e, 1);
   assert(e.windows.active != original && e.view->cx == 0 && e.view->cy == 0);
   type(&e, "X\n");
   assert(e.windows.panes[original].cy == 2 && e.windows.panes[original].cx == 1);
-  dispatch_key(&e, CTRL('h'));
+  dispatch_key(&e, KEY_BACKSPACE);
   assert(e.windows.panes[original].cy == 1 && e.windows.panes[original].cx == 1);
-  command_key(&e, 'O');
+  layout_focus(&e, -1);
   assert(e.windows.active == original && e.view->cy == 1 && e.view->cx == 1);
-  command_key(&e, '3');
+  command_key(&e, 'u');
+  sidebar_resizing(&e); // Sidebar resizing preserves every split ratio.
   int width = e.view->area.width;
   command_key(&e, '}');
   assert(e.view->area.width == width + 2);
   command_key(&e, '{');
   assert(e.view->area.width == width);
-  command_key(&e, '3');
+  command_key(&e, 'u');
   assert(e.windows.count == MAX_PANES);
-  assert(!layout_split(&e, LAYOUT_HORIZONTAL) && !layout_split(&e, LAYOUT_VERTICAL));
-  assert(!listed(&e, '2') && !listed(&e, '3'));
+  assert(!test_shared_split(&e, LAYOUT_HORIZONTAL) && !test_shared_split(&e, LAYOUT_VERTICAL));
+  assert(!listed(&e, 'q') && !listed(&e, 'u'));
   validate(&e);
 
   int panes[MAX_PANES], count = layout_order(&e, panes);
   for (int i = 0; i < count; i++) {
     assert(e.windows.active == panes[i]);
-    command_key(&e, 'o');
+    layout_focus(&e, 1);
   }
   assert(e.windows.active == panes[0]);
   view *tracked = &e.windows.panes[panes[1]];
@@ -146,8 +204,8 @@ int main(int argc, char **argv) {
   tracked->sel_mode = tracked->sel_active = 1;
   dispatch_key(&e, META('<'));
   dispatch_key(&e, CTRL(' '));
-  dispatch_key(&e, CTRL('n'));
-  dispatch_key(&e, CTRL('n'));
+  dispatch_key(&e, KEY_DOWN);
+  dispatch_key(&e, KEY_DOWN);
   dispatch_key(&e, CTRL('f'));
   dispatch_key(&e, CTRL('d'));
   assert(e.document.buf.nlines == 1 && !strcmp(buffer_line(&e.document.buf, 0), "hi"));
@@ -156,7 +214,7 @@ int main(int argc, char **argv) {
   dispatch_key(&e, 0xe8);
   assert(!strcmp(buffer_line(&e.document.buf, 0), "\xc3\xa8hi"));
   assert(tracked->cx == 2 && tracked->selx == 4);
-  command_key(&e, 'o');
+  layout_focus(&e, 1);
   assert(e.view == tracked && cursor_col(&e) == 1);
   dispatch_key(&e, CTRL('g'));
 
@@ -169,7 +227,7 @@ int main(int argc, char **argv) {
   layout_arrange(&e);
   assert(e.windows.compact && e.view->area.width == 15);
   int active = e.windows.active;
-  command_key(&e, 'o');
+  layout_focus(&e, 1);
   assert(e.windows.active != active && e.view->area.width == 15);
   assert(!listed(&e, ']') && !listed(&e, '}'));
   e.cols = 80;
@@ -186,10 +244,10 @@ int main(int argc, char **argv) {
   abuf ab = {0};
   dispatch_draw(&e, &ab);
   ab_append(&ab, "\0", 1);
-  assert(strstr(ab.b, "Keep only this pane") && strstr(ab.b, "Up/Down scroll"));
+  assert(strstr(ab.b, "Save") && strstr(ab.b, "Up/Down scroll"));
   ab_free(&ab);
   dispatch_key(&e, CTRL('g'));
-  command_key(&e, '1');
+  layout_only(&e);
   assert(e.windows.count == 1 && e.view->cx >= 0);
   for (const char *key = contextual; *key; key++)
     assert(!listed(&e, *key));
@@ -197,7 +255,7 @@ int main(int argc, char **argv) {
   layout_arrange(&e);
 
   for (int i = 0; i < 500; i++) {
-    layout_split(&e, i % 2 ? LAYOUT_HORIZONTAL : LAYOUT_VERTICAL);
+    test_shared_split(&e, i % 2 ? LAYOUT_HORIZONTAL : LAYOUT_VERTICAL);
     layout_focus(&e, 1);
     layout_resize(&e, i % 2 ? LAYOUT_VERTICAL : LAYOUT_HORIZONTAL, i % 3 - 1);
     if (i % 3 == 0)
@@ -207,7 +265,7 @@ int main(int argc, char **argv) {
     validate(&e);
   }
   layout_only(&e);
-  assert(layout_split(&e, LAYOUT_VERTICAL));
+  assert(test_shared_split(&e, LAYOUT_VERTICAL));
   while (layout_resize(&e, LAYOUT_VERTICAL, -1))
     validate(&e);
   assert(e.view->area.width == 12);
@@ -217,17 +275,17 @@ int main(int argc, char **argv) {
   dispatch_key(&e, META('>'));
   type(&e, "\nabcdefghijkl\nx\nabcdefghijkl");
   dispatch_key(&e, META('<'));
-  dispatch_key(&e, CTRL('n'));
+  dispatch_key(&e, KEY_DOWN);
   dispatch_key(&e, CTRL('e'));
-  dispatch_key(&e, CTRL('n'));
+  dispatch_key(&e, KEY_DOWN);
   assert(e.view->cy == 2 && e.view->cx == 1 && e.view->sticky == 12);
-  assert(layout_split(&e, LAYOUT_VERTICAL));
+  assert(test_shared_split(&e, LAYOUT_VERTICAL));
   layout_focus(&e, 1);
   dispatch_key(&e, META('<'));
   type(&e, "!");
   layout_focus(&e, -1);
   assert(e.view->cx == 1 && e.view->sticky == 12);
-  dispatch_key(&e, CTRL('n'));
+  dispatch_key(&e, KEY_DOWN);
   assert(e.view->cx == 12);
   layout_only(&e);
   command_key(&e, CTRL('s'));

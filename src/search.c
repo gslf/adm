@@ -1,730 +1,837 @@
-// Incremental search with a small regular expression engine, and the
-// go-to-line prompt that shares its bar.
-//
-// C-s opens a prompt on the bottom status bar. The search is incremental:
-// each keystroke runs it again from where the cursor was, and the first match
-// is shown highlighted. Enter closes the prompt and leaves the cursor on the
-// match, Esc closes it and puts everything back, and the arrow keys walk the
-// matches: Down (or C-s again) to the next one, Up to the previous one,
-// wrapping around the ends of the file.
-//
-// C-x g opens the same prompt as GOTO: type a line number and the view
-// follows it as it is typed, Enter stays there, Esc goes back. A number past
-// the end of the file stops at the last line.
-//
-// The pattern language is the classic core of regular expressions:
-//
-//   c          a literal character (UTF-8 aware)
-//   .          any single character
-//   ^  $       start and end of the line, special only in those positions
-//   [...]      a character class, with ranges like a-z and negation [^...]
-//   \d \w \s   digit, word character, whitespace; \D \W \S their opposites
-//   \c         the literal character c, for when c is special
-//   * + ?      zero or more, one or more, zero or one of the last element
-//
-// The engine is deliberately the smallest thing that honestly earns the name
-// regex: no groups, no alternation, no back references. Patterns are
-// interpreted straight from their own text, one line at a time, with greedy
-// backtracking on the quantifiers. Nothing beyond the C standard library,
-// which is what lets the same code run everywhere the editor does.
-
 #include "search.h"
 #include "cursor.h"
+#include "path.h"
 #include "screen.h"
+#include "search_job.h"
 #include "utf8.h"
-
+#include "undo.h"
+#include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-///////////////////////////////////
-// REGEX ENGINE
-
-static int is_digit_cp(int cp) {
-  return cp >= '0' && cp <= '9';
-}
-
-static int is_space_cp(int cp) {
-  return cp == ' ' || cp == '\t' || cp == '\r' || cp == '\n' || cp == '\f' ||
-         cp == '\v';
-}
-
-// The same idea of a word the cursor uses for Ctrl-Left and Ctrl-Right:
-// letters, digits, underscore, and everything outside ASCII.
-static int is_word_cp(int cp) {
-  return is_digit_cp(cp) || (cp >= 'a' && cp <= 'z') ||
-         (cp >= 'A' && cp <= 'Z') || cp == '_' || cp >= 0x80;
-}
-
-// Does the class escape letter c accept the code point? Returns -1 when c is
-// no class letter at all, so the caller falls back to a literal match.
-static int class_escape(char c, int cp) {
-  switch (c) {
-    case 'd': return is_digit_cp(cp);
-    case 'D': return !is_digit_cp(cp);
-    case 'w': return is_word_cp(cp);
-    case 'W': return !is_word_cp(cp);
-    case 's': return is_space_cp(cp);
-    case 'S': return !is_space_cp(cp);
-    default:  return -1;
-  }
-}
-
-// Bytes taken by the single pattern element starting at p, not counting any
-// quantifier behind it. Returns 0 when the element is malformed: a backslash
-// with nothing after it, or a class that never closes.
-static int elem_len(const char *p) {
-  int cp;
-
-  if (*p == '\\') {
-    if (p[1] == '\0')
-      return 0;
-    return 1 + utf8_decode(p + 1, &cp);
-  }
-
-  if (*p == '[') {
-    int i = 1;
-    if (p[i] == '^')
-      i++;
-    if (p[i] == ']')
-      i++; // a ']' first thing in the class is a literal, not the end
-    while (p[i] != ']') {
-      if (p[i] == '\0')
-        return 0;
-      if (p[i] == '\\') {
-        if (p[i + 1] == '\0')
-          return 0;
-        i++;
-      }
-      i += utf8_decode(p + i, &cp);
-    }
-    return i + 1;
-  }
-
-  return utf8_decode(p, &cp);
-}
-
-// Does the class starting at p, which points at its '[', accept cp?
-static int class_match(const char *p, int cp) {
-  int i = 1;
-  int negate = 0;
-  if (p[i] == '^') {
-    negate = 1;
-    i++;
-  }
-
-  int hit = 0;
-  int first = 1; // lets a leading ']' through as a literal
-  while (p[i] != ']' || first) {
-    first = 0;
-    int lo;
-
-    if (p[i] == '\\') {
-      int r = class_escape(p[i + 1], cp);
-      if (r >= 0) {
-        if (r)
-          hit = 1;
-        i += 2;
-        continue;
-      }
-      i++;
-      i += utf8_decode(p + i, &lo);
-    } else {
-      i += utf8_decode(p + i, &lo);
-    }
-
-    // A range like a-z, unless the '-' is the last thing before the ']'.
-    if (p[i] == '-' && p[i + 1] != ']' && p[i + 1] != '\0') {
-      int hi;
-      i++;
-      if (p[i] == '\\')
-        i++;
-      i += utf8_decode(p + i, &hi);
-      if (cp >= lo && cp <= hi)
-        hit = 1;
-    } else if (cp == lo) {
-      hit = 1;
-    }
-  }
-
-  return negate ? !hit : hit;
-}
-
-// Match the one element at p against the text at t. On success returns 1 and
-// stores in *tlen the bytes of text it covered; an element never matches
-// empty text, so that is always at least one.
-static int elem_match(const char *p, const char *t, int *tlen) {
-  if (*t == '\0')
-    return 0;
-
-  int cp;
-  int n = utf8_decode(t, &cp);
-
-  int ok;
-  int lit;
-  if (*p == '.') {
-    ok = 1;
-  } else if (*p == '[') {
-    ok = class_match(p, cp);
-  } else if (*p == '\\') {
-    int r = class_escape(p[1], cp);
-    if (r >= 0) {
-      ok = r;
-    } else {
-      utf8_decode(p + 1, &lit);
-      ok = (cp == lit);
-    }
-  } else {
-    utf8_decode(p, &lit);
-    ok = (cp == lit);
-  }
-
-  if (!ok)
-    return 0;
-  *tlen = n;
-  return 1;
-}
-
-static int match_here(const char *p, const char *t);
-
-// A quantified element: take as many repetitions as the text gives, then
-// hand them back one at a time until the rest of the pattern fits. min is 1
-// for '+', max is 1 for '?' and -1 when there is no limit.
-static int match_quant(const char *p, int el, int min, int max,
-                       const char *t) {
-  const char *rest = p + el + 1;
-
-  int count = 0, total = 0, tlen;
-  while ((max < 0 || count < max) && elem_match(p, t + total, &tlen)) {
-    total += tlen;
-    count++;
-  }
-
-  while (count >= min) {
-    int r = match_here(rest, t + total);
-    if (r >= 0)
-      return total + r;
-    if (count == 0)
-      break;
-
-    // One repetition fewer. Repetitions vary in byte length, so the offset
-    // of the shorter run is recounted from the start rather than stored.
-    count--;
-    total = 0;
-    for (int i = 0; i < count; i++) {
-      elem_match(p, t + total, &tlen);
-      total += tlen;
-    }
-  }
-
-  return -1;
-}
-
-// Match the pattern p against the text at t. Returns the bytes of text the
-// whole pattern covered, or -1 if it does not match here. '$' is the end
-// anchor only as the last character of the pattern, a literal anywhere else;
-// '^' is dealt with by the caller before this is ever reached.
-static int match_here(const char *p, const char *t) {
-  if (*p == '\0')
-    return 0;
-  if (*p == '$' && p[1] == '\0')
-    return (*t == '\0') ? 0 : -1;
-
-  int el = elem_len(p);
-  if (el == 0)
-    return -1; // malformed, which validation keeps from ever getting here
-
-  char q = p[el];
-  if (q == '*')
-    return match_quant(p, el, 0, -1, t);
-  if (q == '+')
-    return match_quant(p, el, 1, -1, t);
-  if (q == '?')
-    return match_quant(p, el, 0, 1, t);
-
-  int tlen;
-  if (!elem_match(p, t, &tlen))
-    return -1;
-
-  int r = match_here(p + el, t + tlen);
-  return (r < 0) ? -1 : tlen + r;
-}
-
-// Is the pattern well formed? Checked once, when it is typed, so the matcher
-// itself can take a sound pattern for granted.
-static int pattern_ok(const char *p) {
-  if (*p == '^')
-    p++;
-
-  int have_elem = 0; // is there an element for a quantifier to repeat?
-  while (*p) {
-    if (*p == '*' || *p == '+' || *p == '?') {
-      if (!have_elem)
-        return 0;
-      have_elem = 0; // without groups, "a**" repeats nothing
-      p++;
-      continue;
-    }
-    int el = elem_len(p);
-    if (el == 0)
-      return 0;
-    p += el;
-    have_elem = 1;
-  }
-  return 1;
-}
-
-// Leftmost match on the line at or after byte offset from. Returns the byte
-// offset of the match and stores its byte length in *len, or returns -1.
-static int line_find(const char *pat, const char *line, int from, int *len) {
-  int anchored = (pat[0] == '^');
-  const char *p = anchored ? pat + 1 : pat;
-  int llen = (int)strlen(line);
-
-  if (anchored && from > 0)
-    return -1;
-
-  for (int i = from; i <= llen;) {
-    int r = match_here(p, line + i);
-    if (r >= 0) {
-      *len = r;
-      return i;
-    }
-    if (anchored || i == llen)
-      break;
-    int cp;
-    i += utf8_decode(line + i, &cp);
-  }
-  return -1;
-}
-
-// Rightmost match that starts strictly before byte offset before; pass a
-// value past the line end to take the whole line. Returns as line_find does.
-static int line_rfind(const char *pat, const char *line, int before,
-                      int *len) {
-  int best = -1, blen = 0;
-
-  for (int from = 0;;) {
-    int mlen;
-    int x = line_find(pat, line, from, &mlen);
-    if (x < 0 || x >= before)
-      break;
-    best = x;
-    blen = mlen;
-
-    // On to the next start position. One whole character forward, not one
-    // match forward, so matches that overlap are not stepped over.
-    if (line[x] == '\0')
-      break;
-    int cp;
-    from = x + utf8_decode(line + x, &cp);
-  }
-
-  if (best >= 0)
-    *len = blen;
-  return best;
-}
-
-///////////////////////////////////
-// SEARCHING THE BUFFER
-
-// The first match at or after (from_y, from_x), wrapping past the end of the
-// buffer and giving up after coming full circle.
-static int find_forward(editor *e, const char *pat, int from_y, int from_x,
-                        int *my, int *mx, int *mlen) {
-  int n = e->view->doc->buf.nlines;
-  if (n <= 0)
-    return 0;
-
-  for (int i = 0; i <= n; i++) {
-    int y = (from_y + i) % n;
-    const char *line = buffer_line(&e->view->doc->buf, y);
-    if (!line)
-      continue;
-
-    int len;
-    int x = line_find(pat, line, (i == 0) ? from_x : 0, &len);
-    if (x >= 0) {
-      *my = y;
-      *mx = x;
-      *mlen = len;
-      return 1;
-    }
-  }
-  return 0;
-}
-
-// The same thing backwards: the last match before (before_y, before_x).
-static int find_backward(editor *e, const char *pat, int before_y,
-                         int before_x, int *my, int *mx, int *mlen) {
-  int n = e->view->doc->buf.nlines;
-  if (n <= 0)
-    return 0;
-
-  for (int i = 0; i <= n; i++) {
-    int y = ((before_y - i) % n + n) % n;
-    const char *line = buffer_line(&e->view->doc->buf, y);
-    if (!line)
-      continue;
-
-    // Only the line the search leaves from is cut short; after the wrap it
-    // comes around again whole, one past its end so a match on '$' counts.
-    int limit = (i == 0) ? before_x : (int)strlen(line) + 1;
-    int len;
-    int x = line_rfind(pat, line, limit, &len);
-    if (x >= 0) {
-      *my = y;
-      *mx = x;
-      *mlen = len;
-      return 1;
-    }
-  }
-  return 0;
-}
-
-///////////////////////////////////
-// SEARCH STATE
-
-#define QUERY_MAX 256
-
-static struct {
-  int active;            // the prompt is open and owns the keyboard
-  int goto_mode;         // the prompt is a GOTO one: the query is a line number
-  char query[QUERY_MAX]; // the pattern as typed, NUL terminated
-  int qlen;
-  int valid;             // the pattern is well formed
-  int found;             // a match is on show
-  int my, mx, mlen;      // the match on show: position and byte length
-  int oy, ox;            // where the cursor was when the prompt opened,
-  int orowoff, ocoloff;  // and how the screen was scrolled, for Esc
-  int osticky;
-} S;
-
-// Put the cursor on the match and light the match up. The highlight borrows
-// the selection: the anchor sits at the end of the match and the cursor at
-// its start, which is also where the scrolling brings into view.
-static void show_match(editor *e) {
-  e->view->cy = S.my;
-  e->view->cx = S.mx;
-  e->view->sely = S.my;
-  e->view->selx = S.mx + S.mlen;
-  e->view->sel_active = (S.mlen > 0); // a '^' or '$' match has no width to paint
-  e->view->sel_mode = 0;
-  cursor_mark_column(e);
-}
-
-// Put the view back the way it was when the prompt opened.
-static void restore_view(editor *e) {
-  e->view->cy = S.oy;
-  e->view->cx = S.ox;
-  e->view->rowoff = S.orowoff;
-  e->view->coloff = S.ocoloff;
-  e->view->sticky = S.osticky;
-  e->view->sel_active = 0;
-}
-
-// Run the search again from the position the prompt opened at. Called after
-// every change to the query, which is what makes the search incremental.
-static void search_update(editor *e) {
-  S.valid = pattern_ok(S.query);
-  S.found = 0;
-
-  if (!S.valid || S.qlen == 0) {
-    restore_view(e);
+enum {
+  QUERY,
+  REPLACEMENT,
+  RESULTS,
+  ACTIONS,
+  FILE_REPLACING,
+  WORKSPACE_REPLACING
+};
+struct search_state {
+  int active, goto_mode, workspace, replacing, regex, phase, valid;
+  char query[PATTERN_MAX], replacement[PATTERN_MAX], confirmation[160];
+  int length, replacement_length, input_cursor;
+  int oy, ox, orowoff, ocoloff, osticky;
+  view *origin;
+  unsigned long revision;
+  search_pattern pattern;
+  search_job *job;
+  search_progress progress;
+  uint64_t selected, replace_index, replaced;
+  size_t selected_file, file_offset;
+  int path_offset, shown, initial, cancelled;
+  search_hit pending, cache[256];
+  uint64_t cache_first;
+  size_t cache_count;
+};
+typedef struct search_state search_state;
+static void show_hit(editor *e);
+static void update(editor *e);
+static void close_search(editor *e, int accept);
+static void restore(editor *e) {
+  search_state *s = e->search;
+  if (e->view != s->origin || e->view->revision != s->revision)
     return;
-  }
-
-  S.found = find_forward(e, S.query, S.oy, S.ox, &S.my, &S.mx, &S.mlen);
-  if (S.found)
-    show_match(e);
-  else
-    restore_view(e);
+  e->view->cy = s->oy;
+  e->view->cx = s->ox;
+  e->view->rowoff = s->orowoff;
+  e->view->coloff = s->ocoloff;
+  e->view->sticky = s->osticky;
+  selection_clear(e);
 }
-
-static void search_next(editor *e) {
-  if (!S.found)
-    return;
-
-  // Start one character past the start of the current match, not past its
-  // end, so matches that overlap it are still found.
-  int y = S.my, x = 0;
-  const char *line = buffer_line(&e->view->doc->buf, S.my);
-  if (line && line[S.mx] != '\0') {
-    int cp;
-    x = S.mx + utf8_decode(line + S.mx, &cp);
-  } else {
-    y = (e->view->doc->buf.nlines > 0) ? (S.my + 1) % e->view->doc->buf.nlines : 0;
-  }
-
-  if (find_forward(e, S.query, y, x, &S.my, &S.mx, &S.mlen))
-    show_match(e);
+static void stop(search_state *s) {
+  search_job_stop(s->job);
+  s->job = NULL;
 }
-
-static void search_prev(editor *e) {
-  if (!S.found)
-    return;
-
-  if (find_backward(e, S.query, S.my, S.mx, &S.my, &S.mx, &S.mlen))
-    show_match(e);
-}
-
-// The GOTO twin of search_update: the query is a line number, and the view
-// follows it as it is typed, clamped to the lines the file actually has.
 static void goto_update(editor *e) {
-  if (S.qlen == 0) {
-    restore_view(e);
+  search_state *s = e->search;
+  if (!s->length) {
+    restore(e);
     return;
   }
-
-  long last = (e->view->doc->buf.nlines > 0) ? e->view->doc->buf.nlines - 1 : 0;
-  long y = strtol(S.query, NULL, 10) - 1;
-  if (y > last)
-    y = last;
-  if (y < 0)
-    y = 0;
-
-  e->view->cy = (int)y;
+  long last = e->view->doc->buf.nlines > 0 ? e->view->doc->buf.nlines - 1 : 0;
+  long row = strtol(s->query, NULL, 10) - 1;
+  e->view->cy = (int)(row < 0 ? 0 : row > last ? last : row);
   e->view->cx = 0;
   cursor_mark_column(e);
 }
-
-static void prompt_update(editor *e) {
-  if (S.goto_mode)
+static void update(editor *e) {
+  search_state *s = e->search;
+  if (s->goto_mode) {
     goto_update(e);
-  else
-    search_update(e);
+    return;
+  }
+  stop(s);
+  memset(&s->progress, 0, sizeof s->progress);
+  s->progress.done = 1;
+  s->selected = s->selected_file = s->file_offset = 0;
+  s->path_offset = 0;
+  s->shown = 0;
+  s->initial = 1;
+  s->cache_count = 0;
+  s->valid = pattern_compile(&s->pattern, s->query, s->regex);
+  if (!s->workspace)
+    restore(e);
+  if (!s->length || !s->valid)
+    return;
+  s->job =
+      search_job_start(&s->pattern, s->workspace ? NULL : &e->view->doc->buf,
+                       s->workspace ? e->files.workspace_root : NULL, NULL);
+  if (!s->job) {
+    s->progress.failed = s->progress.done = 1;
+    snprintf(s->progress.error, sizeof s->progress.error,
+             "Cannot start search");
+  }
 }
-
-// Open the prompt, either kind, remembering where the view was for Esc.
-static void prompt_open(editor *e, int goto_mode) {
-  S.active = 1;
-  S.goto_mode = goto_mode;
-  S.qlen = 0;
-  S.query[0] = '\0';
-  S.valid = 1;
-  S.found = 0;
-
-  S.oy = e->view->cy;
-  S.ox = e->view->cx;
-  S.orowoff = e->view->rowoff;
-  S.ocoloff = e->view->coloff;
-  S.osticky = e->view->sticky;
-
-  // Whatever was selected is let go: from here until the prompt closes the
-  // selection machinery is borrowed to show matches.
+static void open_prompt(editor *e, int workspace, int replacing,
+                        int goto_mode) {
+  if (!workspace && !e->view->doc)
+    return;
+  if (!workspace && !goto_mode && e->git.action != GIT_IDLE) {
+    snprintf(e->notice, sizeof e->notice,
+             "Wait for the active Git operation before searching this buffer");
+    return;
+  }
+  if (workspace && !e->files.workspace_root) {
+    snprintf(e->notice, sizeof e->notice, "Cannot find workspace directory");
+    return;
+  }
+  search_state *s = e->search;
+  if (!s) {
+    snprintf(e->notice, sizeof e->notice, "Cannot initialize search");
+    return;
+  }
+  stop(s);
+  memset(s, 0, sizeof *s);
+  s->active = 1;
+  s->workspace = workspace;
+  s->replacing = replacing;
+  s->goto_mode = goto_mode;
+  s->valid = 1;
+  s->progress.done = 1;
+  s->origin = e->view;
+  s->revision = e->view->revision;
+  s->oy = e->view->cy;
+  s->ox = e->view->cx;
+  s->orowoff = e->view->rowoff;
+  s->ocoloff = e->view->coloff;
+  s->osticky = e->view->sticky;
   selection_clear(e);
+  if (workspace)
+    sidebar_show(e, SIDEBAR_FILES);
+  else
+    e->sidebar.focused = 0;
 }
-
-// Command - open the search prompt
-static void search_begin(editor *e) {
-  prompt_open(e, 0);
+static void search_begin(editor *e) { open_prompt(e, 0, 0, 0); }
+static void workspace_begin(editor *e) { open_prompt(e, 1, 0, 0); }
+static void replace_begin(editor *e) { open_prompt(e, 0, 1, 0); }
+static void workspace_replace_begin(editor *e) { open_prompt(e, 1, 1, 0); }
+static void goto_begin(editor *e) { open_prompt(e, 0, 0, 1); }
+static void close_search(editor *e, int accept) {
+  search_state *s = e->search;
+  if (s && s->phase == FILE_REPLACING) undo_group_end(e);
+  if (s->job)
+    search_job_progress(s->job, &s->progress);
+  if (s->progress.failed)
+    snprintf(e->notice, sizeof e->notice, "%s", s->progress.error);
+  stop(s);
+  if (!accept && !s->workspace && !s->replaced)
+    restore(e);
+  else
+    selection_clear(e);
+  s->active = 0;
 }
-
-// Command - open the go-to-line prompt
-static void goto_begin(editor *e) {
-  prompt_open(e, 1);
-}
-
-static void search_close(editor *e, int accept) {
-  S.active = 0;
-  e->view->sel_active = 0;
+static void select_hit(editor *e, const search_hit *h) {
+  search_state *s = e->search;
+  const char *line =
+      e->view->doc ? buffer_line(&e->view->doc->buf, h->row) : NULL;
+  if (!line) {
+    snprintf(e->notice, sizeof e->notice,
+             "Search result changed; search again");
+    return;
+  }
+  int length, x = pattern_find(&s->pattern, line, (int)strlen(line), h->col,
+                               &length, NULL);
+  if (x != h->col || length != h->length) {
+    snprintf(e->notice, sizeof e->notice,
+             "Search result changed; search again");
+    return;
+  }
+  e->view->cy = h->row;
+  e->view->cx = h->col;
+  e->view->sely = h->row;
+  e->view->selx = h->col + h->length;
+  e->view->sel_active = h->length > 0;
   e->view->sel_mode = 0;
-
-  // On Enter the cursor stays on the match, where show_match left it; only
-  // Esc walks everything back.
-  if (!accept)
-    restore_view(e);
+  cursor_mark_column(e);
+  s->shown = 1;
 }
-
-///////////////////////////////////
-// KEYS
-
-static void query_insert(editor *e, int key) {
-  char seq[4];
-  int n = utf8_encode(key, seq);
-  if (n == 0 || S.qlen + n >= QUERY_MAX)
-    return; // a query longer than the buffer is quietly not extended
-
-  memcpy(S.query + S.qlen, seq, n);
-  S.qlen += n;
-  S.query[S.qlen] = '\0';
-  prompt_update(e);
+static void opened(editor *e, int result) {
+  if (result > 0 && e->search && e->search->active)
+    select_hit(e, &e->search->pending);
+  else if (result == 0)
+    snprintf(e->notice, sizeof e->notice, "Cannot open search result");
 }
-
-static void query_backspace(editor *e) {
-  if (S.qlen == 0)
+static void show_hit(editor *e) {
+  search_state *s = e->search;
+  search_hit h;
+  char *path = NULL;
+  if (!search_job_hit(s->job, s->selected, &h, &path))
     return;
-
-  S.qlen = grapheme_prev(S.query, S.qlen);
-  S.query[S.qlen] = '\0';
-  prompt_update(e);
-}
-
-// The GOTO prompt takes digits and nothing else; Enter with an empty query
-// is the same as Esc, there is nowhere it could go.
-static int goto_on_key(editor *e, int key) {
-  switch (key) {
-    case '\x1b':
-    case CTRL('g'):
-      search_close(e, 0);
-      return 1;
-
-    case '\r':
-    case '\n':
-      search_close(e, S.qlen > 0);
-      return 1;
-
-    case KEY_BACKSPACE:
-    case CTRL('h'):
-      query_backspace(e);
-      return 1;
+  s->selected_file = h.file;
+  if (!s->workspace)
+    select_hit(e, &h);
+  else {
+    s->pending = h;
+    documents_open(e, path, opened);
   }
-
-  // Nine digits at most: enough for any file, few enough for a long.
-  if (key >= '0' && key <= '9' && S.qlen < 9)
-    query_insert(e, key);
-
-  return 1;
+  free(path);
 }
-
-static int search_on_key(editor *e, int key) {
-  if (!S.active)
+static void move_hit(editor *e, int step, int open) {
+  search_state *s = e->search;
+  if (!s->job)
+    return;
+  search_job_progress(s->job, &s->progress);
+  if (!s->progress.matches)
+    return;
+  if (step > 0)
+    s->selected = s->selected + 1 < s->progress.matches ? s->selected + 1 : 0;
+  else
+    s->selected = s->selected ? s->selected - 1 : s->progress.matches - 1;
+  search_hit h;
+  if (search_job_hit(s->job, s->selected, &h, NULL))
+    s->selected_file = h.file;
+  if (open || !s->workspace)
+    show_hit(e);
+}
+static int replace_one(editor *e) {
+  search_state *s = e->search;
+  if (!s->shown || !documents_editable(e)) {
+    snprintf(e->notice, sizeof e->notice, "Select an editable match first");
     return 0;
-
-  if (S.goto_mode)
-    return goto_on_key(e, key);
-
-  switch (key) {
-    case '\x1b':
-    case CTRL('g'):
-      search_close(e, 0);
-      return 1;
-
-    case '\r':
-    case '\n':
-      search_close(e, 1);
-      return 1;
-
-    case KEY_BACKSPACE:
-    case CTRL('h'): // what Backspace is on some terminals
-      query_backspace(e);
-      return 1;
-
-    case KEY_DOWN:
-    case CTRL('s'):
-      search_next(e);
-      return 1;
-
-    case KEY_UP:
-    case CTRL('r'):
-      search_prev(e);
-      return 1;
   }
-
-  if (key >= 32 && key < KEY_SPECIAL)
-    query_insert(e, key);
-
-  // While the prompt is open every key belongs to it, the ones it has no
-  // use for included: a stray PgDn must not move the cursor underneath it.
+  search_hit h;
+  char *path = NULL;
+  if (!search_job_hit(s->job, s->selected, &h, &path))
+    return 0;
+  if (s->workspace && !document_matches(e->view->doc, path)) {
+    free(path);
+    snprintf(e->notice, sizeof e->notice,
+             "Enter opens the selected match before replacing");
+    return 0;
+  }
+  free(path);
+  const char *line = buffer_line(&e->view->doc->buf, h.row);
+  int length, x = line ? pattern_find(&s->pattern, line, (int)strlen(line),
+                                      h.col, &length, NULL)
+                       : -1;
+  if (x != h.col || length != h.length) {
+    snprintf(e->notice, sizeof e->notice,
+             "Search result changed; search again");
+    return 0;
+  }
+  // Stop memory readers before changing shared text. Workspace jobs read disk.
+  if (!s->workspace)
+    search_job_cancel(s->job, 1);
+  int changed = strlen(s->replacement) != (size_t)h.length ||
+                memcmp(line + h.col, s->replacement, (size_t)h.length);
+  if (changed && buffer_replace_range(&e->view->doc->buf, h.row, h.col, h.length,
+                           s->replacement) < 0) {
+    snprintf(e->notice, sizeof e->notice,
+             "Cannot allocate replacement; text unchanged");
+    return 0;
+  }
+  if (changed) e->view->doc->dirty = 1;
+  s->replaced++;
+  selection_clear(e);
+  dispatch_change(e);
+  if (s->workspace) {
+    snprintf(e->notice, sizeof e->notice,
+             "Replaced in buffer; save before searching disk again");
+    close_search(e, 1);
+  } else {
+    s->oy = h.row;
+    s->ox = h.col + (int)strlen(s->replacement);
+    update(e);
+    s->phase = ACTIONS;
+  }
   return 1;
 }
-
-///////////////////////////////////
-// PROMPT BAR
-
-// The same palette as the rest of the screen: the badge is the selection
-// blue so the bar and the highlighted match read as one thing, and the bar
-// itself turns to the warning colours when the pattern is broken or finds
-// nothing, which is an answer too.
-#define BAR_COLOURS     "\x1b[30;103m" // black on bright yellow
-#define BAR_BAD_COLOURS "\x1b[97;41m"  // white on red
-#define SEARCH_BADGE    "\x1b[97;44;1m SEARCH \x1b[22m"
-#define SEARCH_BADGE_COLS 8 // visible width of " SEARCH "
-#define GOTO_BADGE      "\x1b[97;44;1m GOTO \x1b[22m"
-#define GOTO_BADGE_COLS 6 // visible width of " GOTO "
-
-static void append_str(abuf *ab, const char *s) {
-  ab_append(ab, s, (int)strlen(s));
-}
-
-// Byte offset of the tail of q that fits in cols screen columns. A query too
-// long for the bar keeps its end on show, which is where the typing happens.
-// Reports in *used the columns that tail takes.
-static int tail_offset(const char *q, int cols, int *used) {
-  int total = utf8_cols(q, (int)strlen(q));
-  int start = 0;
-  while (total > cols && q[start]) {
-    total -= grapheme_width(q, start);
-    start = grapheme_next(q, start);
-  }
-  *used = total;
-  return start;
-}
-
-static void search_on_draw(editor *e, abuf *ab) {
-  if (!S.active)
+static void workspace_replace_confirmed(editor *e) {
+  search_state *s = e->search;
+  if (documents_unsaved_in(e, e->files.workspace_root) ||
+      e->git.action != GIT_IDLE) {
+    snprintf(e->notice, sizeof e->notice,
+             "Save workspace buffers and finish Git operations first");
     return;
-
-  // The bottom status bar is already drawn; this paints the prompt over it.
-  char tmp[32];
-  int n = snprintf(tmp, sizeof tmp, "\x1b[%d;1H", e->rows);
-  ab_append(ab, tmp, n);
-
-  append_str(ab, S.goto_mode ? GOTO_BADGE : SEARCH_BADGE);
-
-  // The GOTO prompt is never in trouble: only digits get in, and a number
-  // past the end of the file just stops at the last line.
-  int trouble = !S.goto_mode && (!S.valid || (S.qlen > 0 && !S.found));
-  append_str(ab, trouble ? BAR_BAD_COLOURS : BAR_COLOURS);
-
-  const char *note = S.goto_mode ? ""
-                     : !S.valid ? "  bad pattern"
-                     : (S.qlen > 0 && !S.found) ? "  no match" : "";
-
-  int avail = e->cols - (S.goto_mode ? GOTO_BADGE_COLS : SEARCH_BADGE_COLS);
+  }
+  search_job *next = search_job_replace(s->job, s->replacement);
+  if (!next) {
+    snprintf(e->notice, sizeof e->notice, "Cannot start replacement");
+    return;
+  }
+  stop(s);
+  s->job = next;
+  if (!s->job) {
+    snprintf(e->notice, sizeof e->notice, "Cannot start replacement");
+    return;
+  }
+  s->phase = WORKSPACE_REPLACING;
+  s->cancelled = 0;
+}
+static void replace_all(editor *e) {
+  search_state *s = e->search;
+  search_job_progress(s->job, &s->progress);
+  if (!s->progress.done) {
+    snprintf(e->notice, sizeof e->notice,
+             "Search still running; wait for the final count");
+    return;
+  }
+  if (s->progress.failed || !s->progress.matches)
+    return;
+  if (s->workspace) {
+    if (documents_unsaved_in(e, e->files.workspace_root) ||
+        e->git.action != GIT_IDLE) {
+      snprintf(e->notice, sizeof e->notice,
+               "Save workspace buffers and finish Git operations first");
+      return;
+    }
+    snprintf(s->confirmation, sizeof s->confirmation,
+             "Replace %llu matches in %zu workspace files on disk?",
+             (unsigned long long)s->progress.matches, s->progress.files);
+    dispatch_confirm(e, workspace_replace_confirmed, s->confirmation);
+  } else if (documents_editable(e)) {
+    search_job_cancel(s->job, 1);
+    undo_group_begin(e);
+    s->replace_index = 0;
+    s->phase = FILE_REPLACING;
+    s->cancelled = 0;
+  }
+}
+static int cached_hit(search_state *s, uint64_t index, search_hit *hit) {
+  if (!s->cache_count || index < s->cache_first ||
+      index >= s->cache_first + s->cache_count) {
+    s->cache_first = index / 256 * 256;
+    s->cache_count = search_job_hits(s->job, s->cache_first, s->cache, 256);
+  }
+  if (index < s->cache_first || index >= s->cache_first + s->cache_count)
+    return 0;
+  *hit = s->cache[index - s->cache_first];
+  return 1;
+}
+// Construct each changed line once, using the disk index. No character-by-
+// character reallocations or quadratic shifting for replace-all.
+static void replace_step(editor *e) {
+  search_state *s = e->search;
+  if (s->replace_index >= s->progress.matches) {
+    undo_group_end(e);
+    s->phase = ACTIONS;
+    s->oy = e->view->cy;
+    s->ox = e->view->cx;
+    update(e);
+    return;
+  }
+  search_hit first;
+  if (!cached_hit(s, s->replace_index, &first)) {
+    close_search(e, 1);
+    return;
+  }
+  const char *line = buffer_line(&e->view->doc->buf, first.row);
+  if (!line) {
+    close_search(e, 1);
+    return;
+  }
+  size_t old = strlen(line), size = old, rlen = strlen(s->replacement);
+  uint64_t end = s->replace_index;
+  search_hit h;
+  while (end < s->progress.matches && cached_hit(s, end, &h) &&
+         h.row == first.row) {
+    if (rlen > (size_t)INT_MAX - 1 - (size - h.length)) {
+      snprintf(e->notice, sizeof e->notice,
+               "Replacement would exceed line size limit");
+      close_search(e, 1);
+      return;
+    }
+    size = size - h.length + rlen;
+    end++;
+  }
+  char *text = malloc(size + 1);
+  if (!text) {
+    snprintf(e->notice, sizeof e->notice,
+             "Out of memory; remaining matches unchanged");
+    close_search(e, 1);
+    return;
+  }
+  size_t write = 0, read = 0;
+  for (uint64_t i = s->replace_index; i < end; i++) {
+    if (!cached_hit(s, i, &h)) {
+      free(text);
+      close_search(e, 1);
+      return;
+    }
+    size_t n = (size_t)h.col - read;
+    memcpy(text + write, line + read, n);
+    write += n;
+    memcpy(text + write, s->replacement, rlen);
+    write += rlen;
+    read = (size_t)h.col + h.length;
+  }
+  memcpy(text + write, line + read, old - read + 1);
+  if (!strcmp(text, line)) {
+    free(text);
+    s->replaced += end - s->replace_index;
+    s->replace_index = end;
+    return;
+  }
+  // Apply individual edits from right to left so every other shared cursor
+  // retains its position relative to unchanged text, then install once.
+  if (buffer_replace_line(&e->view->doc->buf, first.row, text) < 0) {
+    free(text);
+    snprintf(e->notice, sizeof e->notice, "Cannot replace line");
+    close_search(e, 1);
+    return;
+  }
+  buffer *b = &e->view->doc->buf;
+  for (uint64_t i = end; i > s->replace_index;) {
+    if (!cached_hit(s, --i, &h))
+      break;
+    buffer_edit edit = {
+        h.row, h.col, h.row, h.col + h.length, h.row, h.col + (int)rlen};
+    if (b->on_edit)
+      b->on_edit(b, &edit, b->edit_context);
+    view_rebase(e->view, &edit);
+  }
+  s->replaced += end - s->replace_index;
+  s->replace_index = end;
+  e->view->doc->dirty = 1;
+  selection_clear(e);
+  dispatch_change(e);
+}
+void search_tick(editor *e) {
+  search_state *s = e->search;
+  if (!s || !s->active || s->goto_mode || !s->job)
+    return;
+  if (s->phase == FILE_REPLACING) {
+    replace_step(e);
+    return;
+  }
+  search_job_progress(s->job, &s->progress);
+  if (s->phase == WORKSPACE_REPLACING) {
+    if (s->progress.done) {
+      if (s->progress.changed)
+        documents_reload(e, e->files.workspace_root);
+      snprintf(e->notice, sizeof e->notice,
+               "%s: %llu files changed, %llu skipped%s%s",
+               s->cancelled ? "Replacement cancelled" : "Replacement finished",
+               (unsigned long long)s->progress.changed,
+               (unsigned long long)s->progress.skipped,
+               s->progress.failed ? "; " : "",
+               s->progress.failed ? s->progress.error : "");
+      close_search(e, 1);
+    }
+    return;
+  }
+  if (s->selected >= s->progress.matches)
+    s->selected = 0;
+  if (s->selected_file >= s->progress.files)
+    s->selected_file = 0;
+  if (!s->workspace && s->initial && s->progress.matches) {
+    uint64_t lo = 0, hi = s->progress.matches;
+    search_hit h;
+    while (lo < hi) {
+      uint64_t mid = lo + (hi - lo) / 2;
+      if (!search_job_hit(s->job, mid, &h, NULL))
+        break;
+      if (h.row < s->oy || (h.row == s->oy && h.col < s->ox))
+        lo = mid + 1;
+      else
+        hi = mid;
+    }
+    if (lo < s->progress.matches || s->progress.done) {
+      s->selected = lo < s->progress.matches ? lo : 0;
+      s->initial = 0;
+      show_hit(e);
+    }
+  }
+}
+static char *field(search_state *s, int *length) {
+  if (s->phase == REPLACEMENT) {
+    *length = s->replacement_length;
+    return s->replacement;
+  }
+  *length = s->length;
+  return s->query;
+}
+static void input(editor *e, int key) {
+  search_state *s = e->search;
+  int length;
+  char *text = field(s, &length);
+  if (key == KEY_BACKSPACE || key == CTRL('h')) {
+    if (s->input_cursor) {
+      int start = grapheme_prev(text, s->input_cursor);
+      memmove(text + start, text + s->input_cursor,
+              (size_t)(length - s->input_cursor + 1));
+      length -= s->input_cursor - start;
+      s->input_cursor = start;
+    }
+  } else if (key == KEY_DELETE) {
+    if (s->input_cursor < length) {
+      int end = grapheme_next(text, s->input_cursor);
+      memmove(text + s->input_cursor, text + end, (size_t)(length - end + 1));
+      length -= end - s->input_cursor;
+    }
+  } else if (key == KEY_LEFT) {
+    s->input_cursor = grapheme_prev(text, s->input_cursor);
+    return;
+  } else if (key == KEY_RIGHT) {
+    if (s->input_cursor < length)
+      s->input_cursor = grapheme_next(text, s->input_cursor);
+    return;
+  } else if (key == KEY_HOME || key == CTRL('a')) {
+    s->input_cursor = 0;
+    return;
+  } else if (key == KEY_END || key == CTRL('e')) {
+    s->input_cursor = length;
+    return;
+  } else if (key >= 32 && key < KEY_SPECIAL && key != KEY_BACKSPACE) {
+    if (s->goto_mode && (key < '0' || key > '9' || length >= 9))
+      return;
+    char bytes[4];
+    int n = utf8_encode(key, bytes);
+    if (!n || length + n >= PATTERN_MAX)
+      return;
+    memmove(text + s->input_cursor + n, text + s->input_cursor,
+            (size_t)(length - s->input_cursor + 1));
+    memcpy(text + s->input_cursor, bytes, n);
+    length += n;
+    s->input_cursor += n;
+  } else
+    return;
+  if (s->phase == REPLACEMENT)
+    s->replacement_length = length;
+  else {
+    s->length = length;
+    update(e);
+  }
+}
+static int on_key(editor *e, int key) {
+  search_state *s = e->search;
+  if (!s || !s->active)
+    return 0;
+  search_tick(e);
+  if (!s->active)
+    return 0;
+  if (s->phase == WORKSPACE_REPLACING) {
+    if (key == '\x1b' || key == CTRL('g')) {
+      s->cancelled = 1;
+      search_job_cancel(s->job, 0);
+    }
+    return 1;
+  }
+  if (s->phase == FILE_REPLACING) {
+    if (key == '\x1b' || key == CTRL('g'))
+      close_search(e, 1);
+    return 1;
+  }
+  if (key == '\x1b' || key == CTRL('g')) {
+    close_search(e, 0);
+    return 1;
+  }
+  if (s->goto_mode) {
+    if (key == '\r' || key == '\n')
+      close_search(e, s->length > 0);
+    else
+      input(e, key);
+    return 1;
+  }
+  if (s->phase == QUERY && key == '\t') {
+    s->regex = !s->regex;
+    update(e);
+    return 1;
+  }
+  if (s->phase == QUERY && (key == KEY_UP || key == CTRL('r') ||
+                            key == KEY_DOWN || key == CTRL('s'))) {
+    move_hit(e, key == KEY_UP || key == CTRL('r') ? -1 : 1, 0);
+    return 1;
+  }
+  if (key == '\r' || key == '\n') {
+    if (s->phase == QUERY) {
+      if (!s->valid || !s->length)
+        return 1;
+      if (s->replacing) {
+        s->phase = REPLACEMENT;
+        s->input_cursor = s->replacement_length;
+      } else if (s->workspace) {
+        s->phase = RESULTS;
+        show_hit(e);
+      } else
+        close_search(e, 1);
+    } else if (s->phase == REPLACEMENT) {
+      s->phase = ACTIONS;
+      if (!s->workspace)
+        show_hit(e);
+    } else
+      show_hit(e);
+    return 1;
+  }
+  if (s->phase == RESULTS || s->phase == ACTIONS) {
+    if (s->workspace && key == CTRL('b')) {
+      e->sidebar.focused = 1;
+      return 1;
+    }
+    if (s->workspace && key == CTRL('l')) {
+      e->sidebar.focused = 0;
+      return 1;
+    }
+    if (s->workspace && e->sidebar.focused &&
+        (key == KEY_UP || key == KEY_DOWN || key == KEY_LEFT ||
+         key == KEY_RIGHT || key == KEY_PGUP || key == KEY_PGDOWN)) {
+      search_files_key(e, key);
+      return 1;
+    }
+    if (key == KEY_UP || key == CTRL('r'))
+      move_hit(e, -1, 1);
+    else if (key == KEY_DOWN || key == CTRL('s') || key == 'n')
+      move_hit(e, 1, 1);
+    else if (s->phase == ACTIONS && key == 'y')
+      replace_one(e);
+    else if (s->phase == ACTIONS && key == 'a')
+      replace_all(e);
+    return 1;
+  }
+  input(e, key);
+  return 1;
+}
+int search_active(const editor *e) { return e->search && e->search->active; }
+static void bar(editor *e, char *text, size_t size, int *cursor) {
+  search_state *s = e->search;
+  *cursor = -1;
+  if (s->goto_mode) {
+    snprintf(text, size, " GOTO %s", s->query);
+    *cursor = 6 + s->input_cursor;
+    return;
+  }
+  const char *scope = s->workspace ? "WORKSPACE" : "FILE",
+             *mode = s->regex ? "REGEX" : "TEXT";
+  const char *running = s->progress.done ? "" : "...";
+  if (s->phase == WORKSPACE_REPLACING) {
+    snprintf(text, size, " REPLACE %llu matches / %llu files%s  Esc: cancel",
+             (unsigned long long)s->progress.matches,
+             (unsigned long long)s->progress.changed, running);
+    return;
+  }
+  if (s->phase == FILE_REPLACING) {
+    snprintf(text, size, " REPLACE %llu/%llu  Esc: stop",
+             (unsigned long long)s->replace_index,
+             (unsigned long long)s->progress.matches);
+    return;
+  }
+  int length;
+  char *q = field(s, &length);
+  char suffix[180];
+  if (s->phase == REPLACEMENT)
+    snprintf(suffix, sizeof suffix, "  Enter: actions  Esc: cancel");
+  else if (e->notice[0])
+    snprintf(suffix, sizeof suffix, "  %.100s", e->notice);
+  else if (!s->valid)
+    snprintf(suffix, sizeof suffix, "  invalid regex");
+  else if (s->progress.failed)
+    snprintf(suffix, sizeof suffix, "  %.70s", s->progress.error);
+  else
+    snprintf(suffix, sizeof suffix, "  %llu/%llu%s  %s%s",
+             (unsigned long long)(s->progress.matches ? s->selected + 1 : 0),
+             (unsigned long long)s->progress.matches, running,
+             s->phase == ACTIONS   ? "y:replace n:next a:all"
+             : s->phase == RESULTS ? "Up/Down: hits Enter:open"
+                                   : "Up/Down: hits Tab:regex",
+             s->progress.skipped ? " [skipped]" : "");
+  char prefix[60];
+  snprintf(prefix, sizeof prefix, " %s %s %s ",
+           s->phase == REPLACEMENT ? "REPLACE" : "SEARCH", scope, mode);
+  if (e->cols < 60)
+    snprintf(prefix, sizeof prefix, " %s %s ",
+             s->phase == REPLACEMENT ? "REPL"
+             : s->workspace          ? "WS"
+                                     : "FIND",
+             s->regex ? "RX" : "TXT");
+  if (e->cols < 60 && s->phase != REPLACEMENT && s->valid &&
+      !s->progress.failed)
+    snprintf(suffix, sizeof suffix, " %llu/%llu%s %s",
+             (unsigned long long)(s->progress.matches ? s->selected + 1 : 0),
+             (unsigned long long)s->progress.matches, running,
+             s->phase == ACTIONS   ? "y n a"
+             : s->phase == RESULTS ? "Up/Dn Enter"
+                                   : "Up/Dn Tab:RX");
+  int reserve = (int)strlen(prefix) + (int)strlen(suffix),
+      avail = e->cols - reserve;
+  if (avail < 4 && s->valid && !s->progress.failed && !e->notice[0]) {
+    snprintf(suffix, sizeof suffix, " %llu/%llu%s",
+             (unsigned long long)(s->progress.matches ? s->selected + 1 : 0),
+             (unsigned long long)s->progress.matches, running);
+    avail = e->cols - (int)strlen(prefix) - (int)strlen(suffix);
+  }
   if (avail < 0)
     avail = 0;
-
-  // The note is plain ASCII, so its bytes are its columns. It is clipped
-  // before the query is: seeing what was typed matters more.
-  int notelen = (int)strlen(note);
-  if (notelen > avail - 1)
-    notelen = (avail > 1) ? avail - 1 : 0;
-
-  int qcols;
-  int qstart = tail_offset(S.query, avail - 1 - notelen, &qcols);
-
-  int used = 0;
-  if (avail > 0) {
-    ab_append(ab, " ", 1);
-    ab_append(ab, S.query + qstart, S.qlen - qstart);
-    ab_append(ab, note, notelen);
-    used = 1 + qcols + notelen;
+  int start = 0;
+  while (start < s->input_cursor &&
+         utf8_cols(q + start, s->input_cursor - start) > avail)
+    start = grapheme_next(q, start);
+  int end = start;
+  while (end < length &&
+         utf8_cols(q + start, grapheme_next(q, end) - start) <= avail)
+    end = grapheme_next(q, end);
+  snprintf(text, size, "%s%.*s%s", prefix, end - start, q + start, suffix);
+  if (s->phase == QUERY || s->phase == REPLACEMENT)
+    *cursor =
+        (int)strlen(prefix) + utf8_cols(q + start, s->input_cursor - start);
+}
+static void on_draw(editor *e, abuf *ab) {
+  if (!search_active(e) || e->confirmation)
+    return;
+  search_tick(e);
+  if (!search_active(e))
+    return;
+  char text[600];
+  int cursor;
+  bar(e, text, sizeof text, &cursor);
+  screen_position(ab, 0, e->rows - 1);
+  ab_append(ab, "\x1b[30;103m", 9);
+  int used = screen_text(ab, text, e->cols);
+  screen_repeat(ab, ' ', e->cols - used);
+  ab_append(ab, "\x1b[m", 3);
+}
+int search_cursor(const editor *e, int *x, int *y) {
+  if (!search_active(e) || e->confirmation)
+    return 0;
+  char text[600];
+  int cursor;
+  bar((editor *)e, text, sizeof text, &cursor);
+  if (cursor < 0 || e->cols <= 0 || e->rows <= 0)
+    return 0;
+  *x = cursor < e->cols ? cursor : e->cols - 1;
+  *y = e->rows - 1;
+  return 1;
+}
+int search_files_draw(editor *e, abuf *ab, rect area) {
+  search_state *s = e->search;
+  if (!s || !s->active || !s->workspace)
+    return 0;
+  search_job_progress(s->job, &s->progress);
+  screen_fill(ab, area, ' ');
+  screen_position(ab, area.x, area.y);
+  const char *focus = e->sidebar.focused ? "\x1b[97;44m" : "\x1b[30;47m";
+  ab_append(ab, focus, (int)strlen(focus));
+  int used = screen_text(
+      ab, e->sidebar.focused ? " FILES * SEARCH" : " FILES SEARCH", area.width);
+  screen_repeat(ab, ' ', area.width - used);
+  ab_append(ab, "\x1b[m", 3);
+  int rows = (area.height - 2) / 2;
+  if (rows < 1)
+    rows = 1;
+  if (s->selected_file < s->file_offset)
+    s->file_offset = s->selected_file;
+  if (s->selected_file >= s->file_offset + (size_t)rows)
+    s->file_offset = s->selected_file - rows + 1;
+  for (int i = 0; i < rows && area.y + i * 2 + 2 < area.y + area.height - 1;
+       i++) {
+    size_t index = s->file_offset + (size_t)i;
+    search_file file;
+    if (!search_job_file(s->job, index, &file))
+      break;
+    if (index == s->selected_file)
+      ab_append(ab, focus, (int)strlen(focus));
+    screen_position(ab, area.x, area.y + i * 2 + 1);
+    char label[400];
+    snprintf(label, sizeof label, "%s [%llu]", path_name(file.path),
+             (unsigned long long)file.count);
+    used = screen_text(ab, label, area.width);
+    screen_repeat(ab, ' ', area.width - used);
+    screen_position(ab, area.x, area.y + i * 2 + 2);
+    int start = 0;
+    for (int col = 0; file.path[start] && col < s->path_offset; col++)
+      start = grapheme_next(file.path, start);
+    used = screen_text(ab, file.path + start, area.width);
+    screen_repeat(ab, ' ', area.width - used);
+    ab_append(ab, "\x1b[m", 3);
+    free(file.path);
   }
-  for (int i = used; i < avail; i++)
-    ab_append(ab, " ", 1);
-
-  append_str(ab, "\x1b[m");
+  screen_position(ab, area.x, area.y + area.height - 1);
+  screen_text(ab, "Left/Right: path  Enter:open", area.width);
+  screen_fill(ab, (rect){area.width, area.y, 1, area.height}, '|');
+  return 1;
 }
-
-///////////////////////////////////
-// MODULE
-
-static void search_init(editor *e) {
-  (void)e;
+int search_files_key(editor *e, int key) {
+  search_state *s = e->search;
+  if (!s || !s->active || !s->workspace)
+    return 0;
+  search_job_progress(s->job, &s->progress);
+  int step = key == KEY_UP       ? -1
+             : key == KEY_DOWN   ? 1
+             : key == KEY_PGUP   ? -5
+             : key == KEY_PGDOWN ? 5
+                                 : 0;
+  if (step && s->progress.files) {
+    if (step < 0)
+      s->selected_file =
+          (size_t)(-step) > s->selected_file ? 0 : s->selected_file + step;
+    else
+      s->selected_file = s->selected_file + (size_t)step < s->progress.files
+                             ? s->selected_file + step
+                             : s->progress.files - 1;
+    search_file f;
+    if (search_job_file(s->job, s->selected_file, &f)) {
+      s->selected = f.first;
+      free(f.path);
+    }
+  } else if (key == KEY_LEFT) {
+    if (s->path_offset)
+      s->path_offset--;
+  } else if (key == KEY_RIGHT) {
+    if (s->path_offset < INT_MAX)
+      s->path_offset++;
+  } else if (key == '\r' || key == '\n')
+    show_hit(e);
+  return 1;
+}
+void search_status(editor *e, unsigned long long *matches, int *done) {
+  search_tick(e);
+  search_state *s = e->search;
+  *matches = s ? (unsigned long long)s->progress.matches : 0;
+  *done = !s || s->progress.done;
+}
+static void init(editor *e) {
+  e->search = calloc(1, sizeof *e->search);
   dispatch_bind(CTRL('s'), search_begin);
-  dispatch_bind_prefix('g', goto_begin, "g", "Go to line");
+  dispatch_bind_prefix('s', search_begin, "s", "Search current file");
+  dispatch_bind_prefix_global('S', workspace_begin, "S", "Search workspace");
+  dispatch_bind_prefix('r', replace_begin, "r", "Search and replace in file");
+  dispatch_bind_prefix_global('R', workspace_replace_begin, "R",
+                              "Search and replace in workspace");
+  dispatch_bind_prefix('l', goto_begin, "l", "Go to Line");
 }
-
-static module search = {
-  .name = "search",
-  .init = search_init,
-  .on_key = search_on_key,
-  .on_draw = search_on_draw,
-  .on_change = NULL,
-  .shutdown = NULL
-};
-
-module *search_module(void) {
-  return &search;
+static void shutdown(editor *e) {
+  if (e->search) {
+    if (e->search->phase == FILE_REPLACING) undo_group_end(e);
+    stop(e->search);
+    free(e->search);
+    e->search = NULL;
+  }
 }
+static module search = {.name = "search",
+                        .init = init,
+                        .on_key = on_key,
+                        .on_draw = on_draw,
+                        .shutdown = shutdown};
+module *search_module(void) { return &search; }

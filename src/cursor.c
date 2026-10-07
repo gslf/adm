@@ -3,6 +3,7 @@
 #include "utf8.h"
 
 #include <string.h>
+#include <stdio.h>
 
 // cx and cy are byte offsets into the line, always kept on a grapheme
 // cluster boundary. The screen column is derived from them, never stored.
@@ -13,6 +14,8 @@ static int line_len(editor *e, int row) {
 }
 
 int view_cursor_col(const view *v) {
+  if (!v->doc)
+    return 0;
   const char *line = buffer_line(&v->doc->buf, v->cy);
   return line ? utf8_cols(line, v->cx) : 0;
 }
@@ -191,6 +194,8 @@ void selection_clear(editor *e) {
 }
 
 void cursor_select_toggle(editor *e) {
+  if (!e->view->doc)
+    return;
   if (e->view->sel_mode) {
     selection_clear(e);
     return;
@@ -203,7 +208,7 @@ void cursor_select_toggle(editor *e) {
 }
 
 int view_selection_range(const view *v, int *sr, int *sc, int *er, int *ec) {
-  if (!v->sel_active)
+  if (!v->doc || !v->sel_active)
     return 0;
 
   // The anchor may sit after the cursor, so order the two points.
@@ -221,33 +226,17 @@ int selection_range(const editor *e, int *sr, int *sc, int *er, int *ec) {
   return view_selection_range(e->view, sr, sc, er, ec);
 }
 
-void selection_delete(editor *e) {
+int selection_delete(editor *e) {
   int sr, sc, er, ec;
-  if (!selection_range(e, &sr, &sc, &er, &ec))
-    return;
-
-  if (sr == er) {
-    for (int i = ec - sc; i > 0; i--)
-      buffer_delete_char(&e->view->doc->buf, sr, sc);
-  } else {
-    // Cut the tail of the first row and the head of the last one, drop the
-    // fully selected rows in between, then pull what is left of the last
-    // row up onto the first.
-    char *first = buffer_line(&e->view->doc->buf, sr);
-    int flen = first ? (int)strlen(first) : 0;
-    for (int i = flen - sc; i > 0; i--)
-      buffer_delete_char(&e->view->doc->buf, sr, sc);
-    for (int i = ec; i > 0; i--)
-      buffer_delete_char(&e->view->doc->buf, er, 0);
-    for (int r = er - 1; r > sr; r--)
-      buffer_remove_line(&e->view->doc->buf, r);
-    buffer_join_line(&e->view->doc->buf, sr);
+  if (!selection_range(e, &sr, &sc, &er, &ec)) return 0;
+  if (buffer_replace_span(&e->view->doc->buf, sr, sc, er, ec, "", 0, NULL) < 0) {
+    snprintf(e->notice, sizeof e->notice, "Cannot delete selection; text unchanged");
+    return -1;
   }
-
-  e->view->cy = sr;
-  e->view->cx = sc;
-  selection_clear(e); // the text it covered is gone, and so is the mode
+  e->view->cy = sr; e->view->cx = sc;
+  selection_clear(e);
   cursor_mark_column(e);
+  return 1;
 }
 
 int selection_char_count(const editor *e) {
@@ -275,6 +264,8 @@ int selection_char_count(const editor *e) {
 // drops the selection; with it on, the anchor stays put and the move extends
 // the selection to wherever the cursor lands.
 static void do_move(editor *e, command move) {
+  if (!e->view->doc)
+    return;
   if (!e->view->sel_mode)
     e->view->sel_active = 0;
 

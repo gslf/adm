@@ -70,6 +70,8 @@ void dispatch_bind_prefix(int key, command cmd, const char *keys,
                           const char *label); // bind a suffix after C-x
 void dispatch_bind_prefix_global(int key, command cmd, const char *keys,
                                  const char *label);
+void dispatch_bind_prefix_global_when(int key, command cmd, const char *keys,
+                                      const char *label, command_condition when);
 void dispatch_bind_prefix_when(int key, command cmd, const char *keys,
                                const char *label, command_condition when);
 void dispatch_pair_prefix(int first_key, int second_key, const char *label);

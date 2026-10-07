@@ -28,7 +28,28 @@ char *path_absolute(const char *path) {
 #ifdef _WIN32
   return normalize(_fullpath(NULL, path, 0));
 #else
-  return realpath(path, NULL);
+  char *resolved = realpath(path, NULL);
+  if (resolved)
+    return resolved;
+  // A startup file may not exist until its first save. Resolve its parent.
+  const char *name = strrchr(path, '/');
+  if (!name) {
+    char *cwd = path_current_directory();
+    char *result = cwd ? path_join(cwd, path) : NULL;
+    free(cwd);
+    return result;
+  }
+  size_t length = (size_t)(name - path);
+  char *parent = malloc(length + 2);
+  if (!parent)
+    return NULL;
+  memcpy(parent, path, length);
+  parent[length] = '\0';
+  resolved = realpath(length ? parent : "/", NULL);
+  free(parent);
+  char *result = resolved ? path_join(resolved, name + 1) : NULL;
+  free(resolved);
+  return result;
 #endif
 }
 

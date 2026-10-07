@@ -1,3 +1,4 @@
+#include "shared_views.h"
 #include "clipboard.h"
 #include "file_manager.h"
 #include "path.h"
@@ -9,15 +10,12 @@
 #include <string.h>
 
 static void prefix(editor *e, int key) {
-  dispatch_key(e, CTRL('x'));
-  assert(e->prefix_active);
-  dispatch_key(e, key);
-  assert(!e->prefix_active);
+  test_prefix_shared(e, key);
 }
 
 static void select_entry(editor *e, const char *name) {
   if (!e->sidebar.focused)
-    prefix(e, 'f');
+    sidebar_focus(e);
   file_tree *tree = &e->files.tree;
   int target = -1;
   for (int i = 0; i < tree->count; i++)
@@ -27,7 +25,7 @@ static void select_entry(editor *e, const char *name) {
     }
   assert(target >= 0 && e->sidebar.focused);
   while (tree->selected != target)
-    dispatch_key(e, tree->selected < target ? CTRL('n') : CTRL('p'));
+    dispatch_key(e, tree->selected < target ? KEY_DOWN : KEY_UP);
 }
 
 static void open_entry(editor *e, const char *name) {
@@ -44,12 +42,12 @@ int main(int argc, char **argv) {
   dispatch_init(&e);
   view *first = e.view;
   assert(e.sidebar.kind != SIDEBAR_FILES && !e.sidebar.focused && e.windows.count == 1);
-  assert(dispatch_prefix_find(&e, 't') && dispatch_prefix_find(&e, 'f'));
+  assert(dispatch_prefix_find(&e, 'f') && dispatch_prefix_find(&e, 'g'));
   assert(!dispatch_prefix_find(&e, '^') && !dispatch_prefix_find(&e, '-'));
-  prefix(&e, 'f');
+  sidebar_focus(&e);
   assert(e.sidebar.kind == SIDEBAR_FILES && e.sidebar.focused && e.view == first);
   assert(e.sidebar.last == SIDEBAR_FILES && e.windows.active == 0);
-  prefix(&e, 'f');
+  sidebar_focus(&e);
   assert(e.sidebar.kind == SIDEBAR_FILES && !e.sidebar.focused && e.view == first);
   assert(e.view->area.x == file_manager_area(&e).width + 1);
   file_tree *tree = &e.files.tree;
@@ -83,12 +81,13 @@ int main(int argc, char **argv) {
   dispatch_key(&e, META('<'));
   file_tree_scroll(tree, 3);
   assert(tree->selected == 0 && tree->offset == 0);
-  prefix(&e, 'f');
+  sidebar_focus(&e);
   assert(!e.sidebar.focused && e.sidebar.kind == SIDEBAR_FILES && e.view == first);
 
   // File-manager focus is independent of the pane targeted by open and split commands.
-  prefix(&e, '3');
-  prefix(&e, 'o');
+  prefix(&e, 'u');
+  e.sidebar.focused = 0;
+  layout_focus(&e, 1);
   view *target = e.view;
   int active = e.windows.active;
   open_entry(&e, "beta.txt");
@@ -98,7 +97,8 @@ int main(int argc, char **argv) {
   assert(beta->views == 1 && !strcmp(buffer_line(&beta->buf, 0), "beta"));
   dispatch_key(&e, '!');
   assert(beta->dirty);
-  prefix(&e, 'o');
+  e.sidebar.focused = 0;
+  layout_focus(&e, 1);
   open_entry(&e, "beta.txt");
   assert(!e.confirmation && e.view == first && e.view->doc == beta && beta->views == 2);
   assert(e.document.views == 0 && !e.document.buf.head);
@@ -108,7 +108,8 @@ int main(int argc, char **argv) {
   open_entry(&e, "alpha.txt");
   assert(!e.confirmation && beta->views == 1 && e.view == first);
   document *alpha = first->doc;
-  prefix(&e, 'o');
+  e.sidebar.focused = 0;
+  layout_focus(&e, 1);
 #ifndef _WIN32
   open_entry(&e, "beta.link");
   assert(e.view->doc == beta && !e.confirmation && beta->views == 1);
@@ -147,9 +148,9 @@ int main(int argc, char **argv) {
   dispatch_key(&e, KEY_RIGHT);
   open_entry(&e, "nested.txt");
   assert(!strcmp(buffer_line(&e.view->doc->buf, 0), "nested"));
-  prefix(&e, 'f');
+  sidebar_focus(&e);
   assert(e.sidebar.focused);
-  prefix(&e, 'g');
+  prefix(&e, 'l');
   assert(!e.sidebar.focused); // Editor commands return focus before starting a prompt.
   dispatch_key(&e, '1');
   dispatch_key(&e, '\r');
@@ -157,24 +158,27 @@ int main(int argc, char **argv) {
   document *nested = e.view->doc;
   assert(nested->dirty && !strcmp(buffer_line(&nested->buf, 0), "!nested"));
 
-  prefix(&e, '2');
-  prefix(&e, 'o');
-  prefix(&e, 'o');
-  prefix(&e, '2');
+  prefix(&e, 'q');
+  e.sidebar.focused = 0;
+  layout_focus(&e, 1);
+  e.sidebar.focused = 0;
+  layout_focus(&e, 1);
+  prefix(&e, 'q');
   assert(e.windows.count == MAX_PANES && nested->views == 2);
   dispatch_key(&e, '@');
   assert(alpha->dirty && nested->dirty);
-  prefix(&e, 'f');
+  sidebar_focus(&e);
   assert(e.sidebar.focused && e.windows.count == MAX_PANES);
   int selected_pane = e.windows.active;
-  prefix(&e, 't');
+  sidebar_toggle(&e, SIDEBAR_FILES);
   assert(e.sidebar.kind != SIDEBAR_FILES && !e.sidebar.focused && e.windows.active == selected_pane);
   assert(e.sidebar.last == SIDEBAR_FILES);
-  prefix(&e, 'f');
+  sidebar_focus(&e);
   assert(e.sidebar.kind == SIDEBAR_FILES && e.sidebar.focused && e.windows.active == selected_pane);
-  prefix(&e, 'o');
+  e.sidebar.focused = 0;
+  layout_focus(&e, 1);
   assert(!e.sidebar.focused && e.windows.active != selected_pane);
-  prefix(&e, 'f');
+  sidebar_focus(&e);
   e.cols = 20;
   layout_arrange(&e);
   assert(!file_manager_area(&e).width && !e.sidebar.focused && e.windows.count == MAX_PANES);

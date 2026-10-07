@@ -15,6 +15,7 @@ void screen_position(abuf *ab, int x, int y);
 void screen_repeat(abuf *ab, char c, int count);
 void screen_fill(abuf *ab, rect area, char c);
 int screen_text(abuf *ab, const char *text, int width);
+void screen_empty(abuf *ab, rect area);
 
 // Width of the line-number column (number plus a space).
 int screen_gutter(const view *v);

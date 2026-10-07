@@ -1,18 +1,26 @@
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "terminal.h"
 #include "dispatch.h"
 #include "screen.h"
 #include "clipboard.h"
 #include "search.h"
+#include "path.h"
 
 int main(int argc, char *argv[]) {
   editor e = {0};
   e.document.filename = (argc > 1) ? argv[1] : NULL;
+  char *filename = argc > 1 ? path_absolute(argv[1]) : NULL;
+  if (filename) {
+    e.document.filename = filename;
+    e.document.owns_filename = 1;
+  }
 
   // Buffer loading
   if (load(&e.document.buf, e.document.filename) == -1) {
     fprintf(stderr, "BUFFER LOAD ERROR: %s\n", e.document.filename ? e.document.filename : "");
+    free(filename);
     return 1;
   }
   e.running = 1;
@@ -21,6 +29,7 @@ int main(int argc, char *argv[]) {
   if (init_raw() == -1) {
     fprintf(stderr, "TERMINAL INITIALIZATION ERROR\n");
     buffer_free(&e.document.buf);
+    free(filename);
     return 1;
   }
   termsize ts = get_size();

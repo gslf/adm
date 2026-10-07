@@ -1,3 +1,4 @@
+#include "search.h"
 #include "screen.h"
 #include "cursor.h"
 #include "utf8.h"
@@ -79,6 +80,8 @@ int screen_text(abuf *ab, const char *text, int width) {
 }
 
 int screen_gutter(const view *v) {
+  if (!v->doc)
+    return 0;
   int n = v->doc->buf.nlines, digits = 1;
   while (n >= 10) {
     n /= 10;
@@ -95,8 +98,15 @@ static void draw_top(const editor *e, abuf *ab) {
   append_str(ab, "\x1b[1m");
   int used = screen_text(ab, " ][adm", e->cols);
   append_str(ab, "\x1b[22m");
-  snprintf(text, sizeof text, "  %s%s", document_name(doc),
-           doc->dirty ? " **" : "");
+  if (e->tab_count > 1) {
+    tabs_draw(e, ab, e->cols - used);
+    append_str(ab, "\x1b[m");
+    return;
+  }
+  const char *name = !doc ? "[Empty]" : doc->label ? doc->label :
+                     doc->filename ? path_name(doc->filename) : document_name(doc);
+  snprintf(text, sizeof text, "  %s%s", name,
+           doc && doc->dirty ? " **" : "");
   used += screen_text(ab, text, e->cols - used);
   screen_repeat(ab, ' ', e->cols - used);
   append_str(ab, "\x1b[m");
@@ -176,14 +186,46 @@ static void draw_row(const view *v, abuf *ab, rect area, int y) {
     append_str(ab, "\x1b[m");
 }
 
+void screen_empty(abuf *ab, rect area) {
+  if (area.width <= 0 || area.height <= 0)
+    return;
+  static const char *mark[] = {
+    "____   ____", "    | |    ", "    | |    ", "    | |    ", "____| |____"
+  };
+  static const char *name[] = {
+    "           _           ", "  __ _  __| |_ __ ___  ",
+    " / _` |/ _` | '_ ` _ \\ ", "| (_| | (_| | | | | | |",
+    " \\__,_|\\__,_|_| |_| |_|"
+  };
+  int large = area.width >= 36 && area.height >= 7;
+  int height = large ? 5 : 1, width = large ? 36 : 7;
+  int x = area.x + (area.width > width ? (area.width - width) / 2 : 0);
+  int y = area.y + (area.height > height + 2 ? (area.height - height - 2) / 2 : 0);
+  for (int row = 0; row < height; row++) {
+    screen_position(ab, x, y + row);
+    append_str(ab, "\x1b[1;93m");
+    int used = screen_text(ab, large ? mark[row] : "][", area.x + area.width - x);
+    append_str(ab, "\x1b[m");
+    used += screen_text(ab, large ? "  " : " ", area.x + area.width - x - used);
+    screen_text(ab, large ? name[row] : "adm", area.x + area.width - x - used);
+  }
+  if (y + height + 1 < area.y + area.height) {
+    const char *hint = "C-x N: Create new file";
+    int length = (int)strlen(hint);
+    int left = area.x + (area.width > length ? (area.width - length) / 2 : 0);
+    screen_position(ab, left, y + height + 1);
+    screen_text(ab, hint, area.x + area.width - left);
+  }
+}
+
 static void draw_pane(editor *e, abuf *ab, view *v, int ordinal) {
   if (v->area.width <= 0 || v->area.height <= 0)
     return;
   if (e->windows.count > 1) {
     char title[512];
     snprintf(title, sizeof title, " %c %d  %s%s", v == e->view ? '*' : ' ', ordinal,
-             v->doc->label ? v->doc->label : v->doc->filename ? path_name(v->doc->filename) : "[No Name]",
-             v->doc->dirty ? " **" : "");
+             !v->doc ? "[Empty]" : v->doc->label ? v->doc->label : v->doc->filename ? path_name(v->doc->filename) : "[No Name]",
+             v->doc && v->doc->dirty ? " **" : "");
     screen_position(ab, v->area.x, v->area.y);
     append_str(ab, v == e->view ? "\x1b[97;44m" : "\x1b[30;47m");
     int used = screen_text(ab, title, v->area.width);
@@ -191,6 +233,10 @@ static void draw_pane(editor *e, abuf *ab, view *v, int ordinal) {
     append_str(ab, "\x1b[m");
   }
   rect area = layout_content(e, v);
+  if (!v->doc) {
+    screen_empty(ab, area);
+    return;
+  }
   cursor_scroll_view(v, area.width - screen_gutter(v), area.height);
   for (int y = 0; y < area.height; y++)
     draw_row(v, ab, area, y);
@@ -227,6 +273,8 @@ static void draw_file_manager(editor *e, abuf *ab) {
   rect area = file_manager_area(e);
   if (area.width <= 0)
     return;
+  if (search_files_draw(e, ab, area))
+    return;
   file_tree *tree = &e->files.tree;
   screen_position(ab, area.x, area.y);
   append_str(ab, e->sidebar.focused ? "\x1b[97;44m" : "\x1b[30;47m");
@@ -252,19 +300,35 @@ static void draw_file_manager(editor *e, abuf *ab) {
   }
   screen_position(ab, area.x, area.y + area.height - 1);
   append_str(ab, tree->error[0] ? WARNING_COLOURS : "\x1b[90m");
-  screen_text(ab, tree->error[0] ? tree->error : "Enter: open  C-g: editor", area.width);
+  screen_text(ab, tree->error[0] ? tree->error : "Enter: open  C-l: editor", area.width);
   append_str(ab, "\x1b[90m");
   screen_fill(ab, (rect){area.width, area.y, 1, area.height}, '|');
   append_str(ab, "\x1b[m");
 }
 
-static void draw_bottom(const editor *e, abuf *ab) {
+static void draw_bottom(editor *e, abuf *ab) {
   screen_position(ab, 0, e->rows - 1);
   char text[512];
   int used = 0;
   if (e->confirmation) {
     append_str(ab, WARNING_COLOURS);
     snprintf(text, sizeof text, " %s y=yes / any=no", e->confirmation_prompt);
+  } else if (e->move_active) {
+    append_str(ab, STATUS_COLOURS);
+    snprintf(text, sizeof text, "%s", e->cols >= 50 ?
+        " MOVE h/j/k/l: split   n/p: tab   b: sidebar   Esc" :
+        e->cols >= 40 ? " MOVE hjkl:split n/p:tab  b:sidebar  Esc" :
+        e->cols >= 32 ? " MOVE hjkl:split np:tab b Esc" :
+        " MOVE hjkl np b Esc");
+  } else if (e->help_active) {
+    append_str(ab, STATUS_COLOURS);
+    snprintf(text, sizeof text, " HELP  Up/Down: scroll  ESC: close");
+  } else if (e->notice[0]) {
+    append_str(ab, WARNING_COLOURS);
+    snprintf(text, sizeof text, " %s", e->notice);
+  } else if (!e->view->doc) {
+    append_str(ab, STATUS_COLOURS);
+    snprintf(text, sizeof text, " [C-x]  Select a file  |  C-x N: Create new file");
   } else {
     append_str(ab, STATUS_COLOURS);
     used = screen_text(ab, " [C-x] ", e->cols);
@@ -275,7 +339,7 @@ static void draw_bottom(const editor *e, abuf *ab) {
       append_str(ab, STATUS_COLOURS);
       used += 8;
     }
-    int length = snprintf(text, sizeof text, " %d:%d  lines %d  chars %d",
+    int length = snprintf(text, sizeof text, " %d:%d  lines %d  chars %zu",
         e->view->cy + 1, cursor_col(e) + 1, e->view->doc->buf.nlines,
         buffer_char_count(&e->view->doc->buf));
     if (e->view->sel_active && length > 0 && length < (int)sizeof text)
@@ -285,7 +349,7 @@ static void draw_bottom(const editor *e, abuf *ab) {
       int panes[MAX_PANES], count = layout_order(e, panes), index = 0;
       while (panes[index] != e->windows.active)
         index++;
-      snprintf(text + length, sizeof text - length, "  pane %d/%d%s", index + 1,
+      snprintf(text + length, sizeof text - length, "  split %d/%d%s", index + 1,
                count, e->windows.compact ? " compact" : "");
     }
   }
@@ -307,11 +371,12 @@ void screen_refresh(editor *e) {
   rect area = layout_content(e, e->view);
   int gutter = screen_gutter(e->view);
   int prompt_x, prompt_y;
-  if (!e->prefix_active && !e->confirmation && git_panel_cursor(e, &prompt_x, &prompt_y)) {
+  if (!e->move_active && !e->help_active && !e->prefix_active && !e->confirmation &&
+      (search_cursor(e, &prompt_x, &prompt_y) || new_file_cursor(e, &prompt_x, &prompt_y) || git_panel_cursor(e, &prompt_x, &prompt_y))) {
     screen_position(&ab, prompt_x, prompt_y);
     append_str(&ab, "\x1b[?25h");
   }
-  if (!e->prefix_active && !e->confirmation && !e->sidebar.focused &&
+  if (e->view->doc && !search_active(e) && !e->move_active && !e->help_active && !e->new_file.active && !e->prefix_active && !e->confirmation && !e->sidebar.focused &&
       area.width > gutter && area.height > 0) {
     int x = area.x + gutter + cursor_col(e) - e->view->coloff;
     int y = area.y + e->view->cy - e->view->rowoff;

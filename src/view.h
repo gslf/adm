@@ -7,8 +7,9 @@ typedef struct rect {
   int x, y, width, height;
 } rect;
 
-// Each pane retains its document; shared text survives until its last view closes.
+// A used pane can be empty. Attached documents survive until their last view closes.
 typedef struct view {
+  int used;
   unsigned long revision;
   document *doc;
   int cx, cy;

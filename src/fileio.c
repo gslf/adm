@@ -4,6 +4,11 @@
 #endif
 
 #include "fileio.h"
+#include "buffer.h"
+#ifndef _WIN32
+#include <unistd.h>
+#include <sys/stat.h>
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,35 +70,82 @@ char *file_read(const char *path){
 }
 
 
-int file_write(const char *path, const char *data){
-
-  // Create temporary swap file path
-  size_t len = strlen(data);
-  char tmp[4096];
-  int name_len = snprintf(tmp, sizeof tmp, "%s.swp", path);
-  if (name_len >= (int)sizeof tmp)
+// Stream to a separate file; a failed save leaves the original and dirty state intact.
+static int write_atomic(const char *path, const char *data, const buffer *b) {
+  size_t length = strlen(path);
+  char *tmp = malloc(length + 16);
+  if (!tmp)
     return -1;
-
-  FILE *fp = fopen(tmp, "wb");
-  if (!fp) return -1;
-
-  size_t write_len = fwrite(data, 1, len, fp);
-  if (write_len != len){
-    fclose(fp);
-    remove(tmp);
+  FILE *fp = NULL;
+#ifdef _WIN32
+  snprintf(tmp, length + 16, "%s.swp", path);
+  // Exclusive creation avoids overwriting somebody else's swap file.
+  fp = fopen(tmp, "wbx");
+#else
+  snprintf(tmp, length + 16, "%s.swp.XXXXXX", path);
+  int fd = mkstemp(tmp);
+  if (fd >= 0) {
+    struct stat info;
+    mode_t mode;
+    if (stat(path, &info) == 0)
+      mode = info.st_mode & 0777;
+    else {
+      mode_t mask = umask(0);
+      umask(mask);
+      mode = 0666 & ~mask;
+    }
+    if (fchmod(fd, mode) < 0) {
+      close(fd);
+      remove(tmp);
+      free(tmp);
+      return -1;
+    }
+    fp = fdopen(fd, "wb");
+    if (!fp) {
+      close(fd);
+      remove(tmp);
+    }
+  }
+#endif
+  if (!fp) {
+    free(tmp);
     return -1;
   }
-
-  if (fclose(fp) != 0){
-    remove(tmp);
-    return -1;
+  int result = 0;
+  if (b) {
+    for (block *k = b->head; k && result == 0; k = k->next)
+      for (int i = 0; i < k->count; i++) {
+        size_t n = strlen(k->lines[i]);
+        if (fwrite(k->lines[i], 1, n, fp) != n || fputc('\n', fp) == EOF) {
+          result = -1;
+          break;
+        }
+      }
+  } else {
+    size_t n = strlen(data);
+    if (fwrite(data, 1, n, fp) != n)
+      result = -1;
   }
-
-  if (replace(tmp, path) != 0){
+  if (fflush(fp) != 0)
+    result = -1;
+#ifndef _WIN32
+  if (result == 0 && fsync(fileno(fp)) != 0)
+    result = -1;
+#endif
+  if (fclose(fp) != 0)
+    result = -1;
+  if (result == 0)
+    result = replace(tmp, path);
+  if (result != 0)
     remove(tmp);
-    return -1;
-  }
+  free(tmp);
+  return result;
+}
 
-  return 0;
+int file_write(const char *path, const char *data) {
+  return write_atomic(path, data, NULL);
+}
 
+int file_write_buffer(const char *path, const buffer *b) {
+  return write_atomic(path, NULL, b);
 }

@@ -6,10 +6,12 @@
 
 typedef struct document {
   buffer buf;
+  struct undo_history *history;
   const char *filename;
   int dirty;
   int views;
   int allocated;
+  int owns_filename;
   int readonly;
   char *label;
   diff_line_kind *diff_lines;

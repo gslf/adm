@@ -37,7 +37,7 @@ int main(int argc, char **argv) {
   editor e = {.document.filename = argv[1], .rows = 24, .cols = 100, .running = 1};
   assert(load(&e.document.buf, e.document.filename) == 0);
   dispatch_init(&e);
-  prefix(&e, 'v');
+  prefix(&e, 'g');
   assert(e.sidebar.kind == SIDEBAR_GIT && e.sidebar.focused);
   settle(&e);
   assert(e.git.repo.unborn && e.git.repo.unstaged == 2 && !e.git.repo.staged);
@@ -61,7 +61,7 @@ int main(int argc, char **argv) {
   dispatch_key(&e, '\r');
   settle(&e);
   assert(e.view->doc->readonly && !e.confirmation);
-  prefix(&e, 'f');
+  dispatch_key(&e, CTRL('b'));
   settle(&e);
   dispatch_key(&e, 'c');
   assert(e.git.mode == GIT_MESSAGE);
@@ -84,15 +84,15 @@ int main(int argc, char **argv) {
   editor outside = {.rows = 24, .cols = 100, .running = 1};
   buffer_init(&outside.document.buf);
   dispatch_init(&outside);
-  prefix(&outside, 'f');
+  assert(!outside.view->doc);
   assert(outside.sidebar.kind == SIDEBAR_FILES && outside.sidebar.focused);
-  prefix(&outside, 'v');
+  prefix(&outside, 'g');
   settle(&outside);
   assert(outside.git.failed && !outside.git.repo.root && !outside.git.repo.files);
   assert(outside.sidebar.kind == SIDEBAR_GIT && outside.sidebar.focused);
   dispatch_key(&outside, CTRL('g'));
   assert(!outside.sidebar.focused);
-  prefix(&outside, 't');
+  prefix(&outside, 'f');
   assert(outside.sidebar.kind == SIDEBAR_FILES && file_manager_area(&outside).width > 0);
   dispatch_shutdown(&outside);
   return 0;

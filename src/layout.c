@@ -1,5 +1,6 @@
 #include "layout.h"
 #include "dispatch.h"
+#include "undo.h"
 
 #include <string.h>
 
@@ -105,21 +106,125 @@ int layout_order(const editor *e, int panes[MAX_PANES]) {
   return count;
 }
 
+// Compact rendering hides inactive panes. Reconstruct their spatial
+// relationships from the tree and split ratios when no screen rectangles exist.
+static void logical_areas(const workspace *w, int index, rect area, rect *areas) {
+  const layout_node *n = &w->nodes[index];
+  if (n->kind == LAYOUT_LEAF) {
+    areas[n->pane] = area;
+    return;
+  }
+  rect a = area, b = area;
+  int length = n->kind == LAYOUT_VERTICAL ? area.width : area.height;
+  int first = (int)((long long)length * n->ratio / RATIO_SCALE);
+  if (n->kind == LAYOUT_VERTICAL) {
+    a.width = first;
+    b.x += first;
+    b.width -= first;
+  } else {
+    a.height = first;
+    b.y += first;
+    b.height -= first;
+  }
+  logical_areas(w, n->first, a, areas);
+  logical_areas(w, n->second, b, areas);
+}
+
+void layout_move(editor *e, int dx, int dy) {
+  if (e->confirmation || e->new_file.active)
+    return;
+  layout_arrange(e);
+  if (e->sidebar.focused) {
+    if (dx > 0)
+      e->sidebar.focused = 0;
+    return;
+  }
+  rect areas[MAX_PANES] = {{0}};
+  if (e->windows.compact)
+    logical_areas(&e->windows, e->windows.root,
+                  (rect){0, 0, 1000000, 1000000}, areas);
+  else
+    for (int i = 0; i < MAX_PANES; i++)
+      areas[i] = e->windows.panes[i].area;
+  rect from = areas[e->windows.active];
+  int best = -1, best_overlap = -1, best_gap = 0, best_offset = 0;
+  int panes[MAX_PANES], count = layout_order(e, panes);
+  int left = from.x, top = from.y;
+  int right = from.x + from.width, bottom = from.y + from.height;
+  for (int i = 0; i < count; i++) {
+    rect area = areas[panes[i]];
+    if (area.x < left) left = area.x;
+    if (area.y < top) top = area.y;
+    if (area.x + area.width > right) right = area.x + area.width;
+    if (area.y + area.height > bottom) bottom = area.y + area.height;
+  }
+  // If no pane lies in the requested direction, view the layout as a torus.
+  // Cross-axis alignment still takes priority, preserving rows/columns in mixed
+  // layouts. Including the current pane on this pass keeps a lone row/column
+  // stationary instead of jumping diagonally to an unrelated pane.
+  for (int wrap = 0; wrap < 2 && best < 0; wrap++) {
+    if (wrap) {
+      from.x -= dx * (right - left);
+      from.y -= dy * (bottom - top);
+    }
+    for (int i = 0; i < count; i++) {
+      int pane = panes[i];
+      if (!wrap && pane == e->windows.active)
+        continue;
+      rect to = areas[pane];
+      int gap = dx > 0 ? to.x - from.x - from.width :
+                dx < 0 ? from.x - to.x - to.width :
+                dy > 0 ? to.y - from.y - from.height : from.y - to.y - to.height;
+      if (gap < 0)
+        continue;
+      int start = dx ? max(from.y, to.y) : max(from.x, to.x);
+      int end = dx ? (from.y + from.height < to.y + to.height ?
+                          from.y + from.height : to.y + to.height) :
+                        (from.x + from.width < to.x + to.width ?
+                          from.x + from.width : to.x + to.width);
+      int overlap = end > start;
+      int offset = dx ? (2 * to.y + to.height) - (2 * from.y + from.height) :
+                        (2 * to.x + to.width) - (2 * from.x + from.width);
+      if (offset < 0)
+        offset = -offset;
+      if (best < 0 || overlap > best_overlap ||
+          (overlap == best_overlap && (gap < best_gap ||
+            (gap == best_gap && offset < best_offset)))) {
+        best = pane;
+        best_overlap = overlap;
+        best_gap = gap;
+        best_offset = offset;
+      }
+    }
+  }
+  if (best >= 0) {
+    e->windows.active = best;
+    e->view = &e->windows.panes[best];
+    layout_arrange(e);
+  }
+}
+
 static void buffer_edited(buffer *b, const buffer_edit *edit, void *context) {
   editor *e = context;
+  undo_note_edit(b, edit);
   // Editing commands move the active cursor; the observer rebases other views.
-  for (int i = 0; i < MAX_PANES; i++) {
-    view *v = &e->windows.panes[i];
-    if (!v->doc || &v->doc->buf != b || v == e->view)
-      continue;
-    view_rebase(v, edit);
+  for (editor_tab *tab = e->tabs; tab; tab = tab->next) {
+    workspace *w = tabs_workspace(e, tab);
+    for (int i = 0; i < MAX_PANES; i++) {
+      view *v = &w->panes[i];
+      if (v->doc && &v->doc->buf == b && v != e->view)
+        view_rebase(v, edit);
+    }
   }
 }
 
 void layout_changed(editor *e) {
-  for (int i = 0; i < MAX_PANES; i++)
-    if (e->windows.panes[i].doc)
-      view_clamp(&e->windows.panes[i]);
+  for (editor_tab *tab = e->tabs; tab; tab = tab->next) {
+    workspace *w = tabs_workspace(e, tab);
+    for (int i = 0; i < MAX_PANES; i++)
+      if (w->panes[i].doc)
+        view_clamp(&w->panes[i]);
+  }
 }
 
 static void reset_layout(editor *e, view initial) {
@@ -128,38 +233,52 @@ static void reset_layout(editor *e, view initial) {
   e->windows.nodes[0] = (layout_node){
     .used = 1, .parent = -1, .first = -1, .second = -1, .pane = 0
   };
+  initial.used = 1;
   e->windows.panes[0] = initial;
   e->view = &e->windows.panes[0];
   layout_arrange(e);
 }
 
-void layout_set_document(editor *e, document *doc) {
+void layout_bind_view(editor *e, view *v, document *doc) {
   if (!doc)
     return;
-  int changed = e->view->doc != doc;
-  view_bind_document(e->view, doc);
+  int changed = v->doc != doc;
+  view_bind_document(v, doc);
   if (changed)
-    e->view->revision = ++e->next_view_revision;
+    v->revision = ++e->next_view_revision;
   doc->buf.on_edit = buffer_edited;
   doc->buf.edit_context = e;
+  undo_attach(doc);
+}
+
+void layout_set_document(editor *e, document *doc) {
+  layout_bind_view(e, e->view, doc);
 }
 
 void layout_init(editor *e) {
+  tabs_init(e);
   reset_layout(e, (view){0});
-  layout_set_document(e, &e->document);
+  if (e->document.filename || e->document.buf.head)
+    layout_set_document(e, &e->document);
+  else {
+    e->view->revision = ++e->next_view_revision;
+    sidebar_show(e, SIDEBAR_FILES);
+  }
 }
 
 void layout_shutdown(editor *e) {
-  for (int i = 0; i < MAX_PANES; i++)
-    view_dispose(&e->windows.panes[i]);
+  tabs_shutdown(e);
   memset(&e->windows, 0, sizeof e->windows);
   e->view = NULL;
 }
 
 int layout_has_unsaved(const editor *e) {
-  for (int i = 0; i < MAX_PANES; i++)
-    if (e->windows.panes[i].doc && e->windows.panes[i].doc->dirty)
-      return 1;
+  for (editor_tab *tab = e->tabs; tab; tab = tab->next) {
+    workspace *w = tabs_workspace(e, tab);
+    for (int i = 0; i < MAX_PANES; i++)
+      if (w->panes[i].doc && w->panes[i].doc->dirty)
+        return 1;
+  }
   return 0;
 }
 
@@ -173,22 +292,21 @@ int layout_can_split(const editor *e, layout_kind kind) {
 }
 
 int layout_split(editor *e, layout_kind kind) {
+  if (e->confirmation || e->new_file.active)
+    return 0;
   layout_arrange(e);
   if (!layout_can_split(e, kind))
     return 0;
   workspace *w = &e->windows;
   int pane = 0, children[2], count = 0;
-  while (w->panes[pane].doc)
+  while (w->panes[pane].used)
     pane++;
   for (int i = 0; i < MAX_LAYOUT_NODES && count < 2; i++)
     if (!w->nodes[i].used)
       children[count++] = i;
   int index = leaf(w, w->active);
   layout_node *n = &w->nodes[index];
-  w->panes[pane] = *e->view;
-  w->panes[pane].revision = ++e->next_view_revision;
-  document_retain(w->panes[pane].doc);
-  w->panes[pane].sel_active = w->panes[pane].sel_mode = 0;
+  w->panes[pane] = (view){.used = 1, .revision = ++e->next_view_revision};
   for (int i = 0; i < 2; i++)
     w->nodes[children[i]] = (layout_node){
       .used = 1, .parent = index, .first = -1, .second = -1,
@@ -199,6 +317,9 @@ int layout_split(editor *e, layout_kind kind) {
   n->second = children[1];
   n->ratio = RATIO_SCALE / 2;
   w->count++;
+  w->active = pane;
+  e->view = &w->panes[pane];
+  sidebar_show(e, SIDEBAR_FILES);
   layout_arrange(e);
   return 1;
 }
@@ -210,7 +331,10 @@ void layout_focus(editor *e, int step) {
   index = (index + step % count + count) % count;
   e->windows.active = panes[index];
   e->view = &e->windows.panes[panes[index]];
-  layout_arrange(e);
+  if (!e->view->doc)
+    sidebar_show(e, SIDEBAR_FILES);
+  else
+    layout_arrange(e);
 }
 
 // Resize the nearest ancestor on the requested axis, preserving nested splits.
@@ -286,7 +410,7 @@ void layout_close(editor *e) {
   if (e->windows.count < 2)
     return;
   const document *doc = e->view->doc;
-  if (doc->views == 1 && doc->dirty)
+  if (doc && doc->views == 1 && doc->dirty)
     dispatch_confirm(e, close_now, "Close without saving?");
   else
     close_now(e);
@@ -303,7 +427,10 @@ static void only_now(editor *e) {
 void layout_only(editor *e) {
   for (int i = 0; i < MAX_PANES; i++) {
     const document *doc = e->windows.panes[i].doc;
-    if (doc && doc != e->view->doc && doc->dirty) {
+    int closing = 0;
+    for (int j = 0; j < MAX_PANES; j++)
+      closing += &e->windows.panes[j] != e->view && e->windows.panes[j].doc == doc;
+    if (doc && doc->dirty && doc->views == closing) {
       dispatch_confirm(e, only_now, "Close other buffers?");
       return;
     }
@@ -316,29 +443,37 @@ static int can_horizontal(const editor *e) { return layout_can_split(e, LAYOUT_H
 static int can_vertical(const editor *e) { return layout_can_split(e, LAYOUT_VERTICAL); }
 static int can_grow_height(const editor *e) { return layout_can_resize(e, LAYOUT_HORIZONTAL, 1); }
 static int can_shrink_height(const editor *e) { return layout_can_resize(e, LAYOUT_HORIZONTAL, -1); }
-static int can_grow_width(const editor *e) { return layout_can_resize(e, LAYOUT_VERTICAL, 2); }
-static int can_shrink_width(const editor *e) { return layout_can_resize(e, LAYOUT_VERTICAL, -2); }
+static int can_grow_width(const editor *e) {
+  return e->sidebar.focused ? sidebar_can_resize(e, 2) :
+         layout_can_resize(e, LAYOUT_VERTICAL, 2);
+}
+static int can_shrink_width(const editor *e) {
+  return e->sidebar.focused ? sidebar_can_resize(e, -2) :
+         layout_can_resize(e, LAYOUT_VERTICAL, -2);
+}
 static void split_horizontal(editor *e) { layout_split(e, LAYOUT_HORIZONTAL); }
 static void split_vertical(editor *e) { layout_split(e, LAYOUT_VERTICAL); }
-static void next_pane(editor *e) { layout_focus(e, 1); }
-static void previous_pane(editor *e) { layout_focus(e, -1); }
 static void grow_height(editor *e) { layout_resize(e, LAYOUT_HORIZONTAL, 1); }
 static void shrink_height(editor *e) { layout_resize(e, LAYOUT_HORIZONTAL, -1); }
-static void grow_width(editor *e) { layout_resize(e, LAYOUT_VERTICAL, 2); }
-static void shrink_width(editor *e) { layout_resize(e, LAYOUT_VERTICAL, -2); }
+static void grow_width(editor *e) {
+  if (e->sidebar.focused) sidebar_resize(e, 2);
+  else layout_resize(e, LAYOUT_VERTICAL, 2);
+}
+static void shrink_width(editor *e) {
+  if (e->sidebar.focused) sidebar_resize(e, -2);
+  else layout_resize(e, LAYOUT_VERTICAL, -2);
+}
 
 void layout_bindings(void) {
-  dispatch_bind_prefix_when('2', split_horizontal, "2", "Split above / below", can_horizontal);
-  dispatch_bind_prefix_when('3', split_vertical, "3", "Split side by side", can_vertical);
-  dispatch_bind_prefix_when('o', next_pane, "o", "Next pane", has_splits);
-  dispatch_bind_prefix_when('O', previous_pane, "O", "Previous pane", has_splits);
+  dispatch_bind(CTRL('q'), split_horizontal);
+  dispatch_bind(CTRL('u'), split_vertical);
+  dispatch_bind_prefix_when('q', split_horizontal, "q", "Split above / below", can_horizontal);
+  dispatch_bind_prefix_when('u', split_vertical, "u", "Split side by side", can_vertical);
   dispatch_bind_prefix_when(']', grow_height, "]", "Grow height", can_grow_height);
   dispatch_bind_prefix_when('[', shrink_height, "[", "Shrink height", can_shrink_height);
-  dispatch_bind_prefix_when('}', grow_width, "}", "Grow width", can_grow_width);
-  dispatch_bind_prefix_when('{', shrink_width, "{", "Shrink width", can_shrink_width);
-  dispatch_bind_prefix_when('0', layout_close, "0", "Close current pane", has_splits);
-  dispatch_bind_prefix_when('1', layout_only, "1", "Keep only this pane", has_splits);
-  dispatch_pair_prefix('o', 'O', "Next / Previous pane");
+  dispatch_bind_prefix_global_when('}', grow_width, "}", "Grow width", can_grow_width);
+  dispatch_bind_prefix_global_when('{', shrink_width, "{", "Shrink width", can_shrink_width);
+  dispatch_bind_prefix_when('c', layout_close, "c", "Close current split", has_splits);
   dispatch_pair_prefix(']', '[', "Grow / Shrink height");
   dispatch_pair_prefix('}', '{', "Grow / Shrink width");
 }

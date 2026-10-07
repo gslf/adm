@@ -40,7 +40,7 @@ static void test_reader(void) {
 
 static void type(editor *e, const char *s) {
   while (*s)
-    dispatch_key(e, (unsigned char)*s++);
+    dispatch_key(e, *s == '\n' ? (++s, '\r') : (unsigned char)*s++);
 }
 
 static void prefix(editor *e, int suffix) {
@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
   assert(e.view->cx == 0 && e.view->cy == 0);
   dispatch_key(&e, CTRL('f'));
   assert(e.view->cx == 1 && !e.view->sel_mode);
-  dispatch_key(&e, CTRL('b'));
+  dispatch_key(&e, KEY_LEFT);
   assert(e.view->cx == 0 && !e.view->sel_mode);
   dispatch_key(&e, META('f'));
   assert(e.view->cx == 4); // Existing word motion goes to the next word's start.
@@ -79,9 +79,9 @@ int main(int argc, char **argv) {
   dispatch_key(&e, CTRL('e'));
   assert(e.view->cx == 7 && e.view->cy == 0);
   dispatch_key(&e, CTRL('a'));
-  dispatch_key(&e, CTRL('n'));
+  dispatch_key(&e, KEY_DOWN);
   assert(e.view->cx == 0 && e.view->cy == 1);
-  dispatch_key(&e, CTRL('p'));
+  dispatch_key(&e, KEY_UP);
   assert(e.view->cy == 0);
   dispatch_key(&e, CTRL('v'));
   assert(e.view->cy == 2);
@@ -95,7 +95,7 @@ int main(int argc, char **argv) {
   dispatch_key(&e, CTRL('f'));
   dispatch_key(&e, CTRL('x'));
   assert(e.prefix_active && e.view->sel_active);
-  dispatch_key(&e, 'z');
+  dispatch_key(&e, '!');
   assert(e.prefix_active && !strcmp(buffer_line(&e.document.buf, 0), "abc def"));
   dispatch_key(&e, CTRL('g'));
   assert(!e.prefix_active && e.view->sel_active); // Cancel only the modal.
@@ -113,7 +113,7 @@ int main(int argc, char **argv) {
   dispatch_key(&e, CTRL('e'));
   dispatch_key(&e, CTRL('y'));
   assert(!strcmp(buffer_line(&e.document.buf, 0), "abc defa"));
-  dispatch_key(&e, CTRL('h'));
+  dispatch_key(&e, KEY_BACKSPACE);
   dispatch_key(&e, CTRL('a'));
   dispatch_key(&e, CTRL(' '));
   dispatch_key(&e, CTRL('f'));
@@ -130,6 +130,14 @@ int main(int argc, char **argv) {
   dispatch_key(&e, META('<'));
   dispatch_key(&e, CTRL('s'));
   type(&e, "abc");
+  unsigned long long matches; int done = 0;
+  for (int attempt = 0; attempt < 10000 && !done; attempt++) {
+    search_status(&e, &matches, &done);
+#ifndef _WIN32
+    usleep(1000);
+#endif
+  }
+  assert(done && matches == 2);
   assert(e.view->sel_active && e.view->cy == 0);
   dispatch_key(&e, CTRL('s'));
   assert(e.view->cy == 2);
@@ -138,31 +146,33 @@ int main(int argc, char **argv) {
   dispatch_key(&e, CTRL('g'));
   assert(!e.view->sel_active && e.view->cy == 0 && e.view->cx == 0);
 
-  prefix(&e, 'g');
+  prefix(&e, 'l');
   type(&e, "2");
   assert(e.view->cy == 1);
   dispatch_key(&e, CTRL('g'));
   assert(e.view->cy == 0);
-  prefix(&e, 'g');
+  prefix(&e, 'l');
   type(&e, "999");
   dispatch_key(&e, '\r');
   assert(e.view->cy == 2);
   dispatch_key(&e, META('<'));
-  prefix(&e, 'l');
+  cursor_screen_bottom(&e);
   assert(e.view->cy == 2);
 
   dispatch_key(&e, CTRL('x'));
   abuf ab = {0};
   dispatch_draw(&e, &ab);
   ab_append(&ab, "\0", 1);
-  assert(!strncmp(ab.b, "\x1b[6;15H", 7)); // Centered 52 x 14 box in 80 x 24.
+  assert(strstr(ab.b, "adm - Command Center"));
   assert(strstr(ab.b, "Save") && strstr(ab.b, "Quit"));
-  assert(strstr(ab.b, "Go to line") && strstr(ab.b, "Last visible line"));
-  assert(strstr(ab.b, "C-s - Save")); // No brackets without a direct binding.
+  assert(strstr(ab.b, "Go to Line") && strstr(ab.b, "Move between splits"));
+  assert(strstr(ab.b, " - Save") && !strstr(ab.b, "C-s [")); // No brackets without a direct binding.
   ab_free(&ab);
   dispatch_key(&e, '\x1b');
 
   // Display aliases from the live registry, including rebinding/removal.
+  dispatch_bind(CTRL('p'), cursor_up);
+  dispatch_bind(CTRL('n'), cursor_down);
   dispatch_bind_prefix('p', cursor_up, "p", "Move up");
   dispatch_bind_prefix('<', cursor_file_start, "<", "File start");
   dispatch_key(&e, CTRL('x'));

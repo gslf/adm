@@ -33,7 +33,7 @@ void cursor_select_toggle(editor *e);
 void selection_clear(editor *e);
 
 // Remove the selected text and leave the cursor where it started.
-void selection_delete(editor *e);
+int selection_delete(editor *e);
 
 // Selection bounds sorted in document order, end column exclusive.
 // Returns 0 and leaves the outputs untouched if nothing is selected.

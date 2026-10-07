@@ -191,15 +191,17 @@ void git_panel_tick(editor *e) {
       message(panel, 1, "Cannot read branches");
     panel->branch_selected = panel->branch_offset = 0;
   } else if (action == GIT_DIFF && success) {
-    if (panel->diff_pane >= 0 && panel->diff_pane < MAX_PANES &&
-        e->windows.panes[panel->diff_pane].doc &&
-        e->windows.panes[panel->diff_pane].revision == panel->diff_revision) {
+    editor_tab *tab = tabs_find(e, panel->diff_tab_id);
+    workspace *target = tab ? tabs_workspace(e, tab) : NULL;
+    if (target && panel->diff_pane >= 0 && panel->diff_pane < MAX_PANES &&
+        target->panes[panel->diff_pane].used &&
+        target->panes[panel->diff_pane].revision == panel->diff_revision) {
       char title[1024];
       snprintf(title, sizeof title, "Diff [%s]: %s", panel->diff_section == GIT_STAGED ? "staged" :
                panel->diff_section == GIT_CONFLICT ? "conflict" : "changes", panel->action_path);
-      documents_preview(e, panel->diff_pane, title, *output ? output : "No differences.\n", opened);
+      documents_preview_at(e, panel->diff_tab_id, panel->diff_pane, title, *output ? output : "No differences.\n", opened);
     } else
-      message(panel, 1, "Diff target pane changed; try again");
+      message(panel, 1, "Diff target split changed; try again");
   } else if (action >= GIT_STAGE && action <= GIT_MERGE) {
     if (success) {
       message(panel, 0, *output ? output : "Git operation completed");
@@ -223,10 +225,8 @@ void git_panel_tick(editor *e) {
     refresh(e);
 }
 
-static void toggle(editor *e) {
-  sidebar_toggle(e, SIDEBAR_GIT);
-  if (e->sidebar.kind == SIDEBAR_GIT)
-    e->sidebar.focused = sidebar_area(e).width > 0;
+static void open_panel(editor *e) {
+  sidebar_show(e, SIDEBAR_GIT);
 }
 
 static int saved(editor *e) {
@@ -274,6 +274,7 @@ static void selected_file(editor *e, int diff) {
   args[index++] = item.file->untracked ? path : item.file->path;
   args[index] = NULL;
   panel->action_path = copy(item.file->path);
+  panel->diff_tab_id = e->active_tab->id;
   panel->diff_pane = e->windows.active;
   panel->diff_revision = e->view->revision;
   panel->diff_section = item.section;
@@ -298,11 +299,8 @@ static void stage(editor *e, int unstage, int all) {
         message(panel, 1, "Out of memory");
         return;
       }
-      int dirty = 0;
-      for (int i = 0; i < MAX_PANES; i++) {
-        document *doc = e->windows.panes[i].doc;
-        dirty |= doc && doc->dirty && document_matches(doc, path);
-      }
+      document *doc = documents_find(e, path);
+      int dirty = doc && doc->dirty;
       free(path);
       if (dirty) {
         message(panel, 1, "Save this buffer before staging");
@@ -464,8 +462,8 @@ void git_panel_key(editor *e, int key) {
                        git_repository_items(&panel->repo);
   int *selected = picking ? &panel->branch_selected : &panel->selected;
   int page = git_panel_list_height(e);
-  if (key == KEY_UP || key == CTRL('p')) { if (*selected > 0) (*selected)--; return; }
-  if (key == KEY_DOWN || key == CTRL('n')) { if (*selected + 1 < count) (*selected)++; return; }
+  if (key == KEY_UP) { if (*selected > 0) (*selected)--; return; }
+  if (key == KEY_DOWN) { if (*selected + 1 < count) (*selected)++; return; }
   if (key == KEY_HOME || key == META('<')) { *selected = 0; return; }
   if (key == KEY_END || key == META('>')) { *selected = count ? count - 1 : 0; return; }
   if (key == KEY_PGUP || key == META('v')) { *selected = *selected > page ? *selected - page : 0; return; }
@@ -510,5 +508,5 @@ void git_panel_key(editor *e, int key) {
 }
 
 void git_panel_bindings(void) {
-  dispatch_bind_prefix_global('v', toggle, "v", "Toggle Git panel");
+  dispatch_bind_prefix_global('g', open_panel, "g", "Open Git Manager");
 }
