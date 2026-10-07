@@ -1,21 +1,19 @@
 # ][adm
 
-A small terminal text editor for POSIX and Windows, built with C11.
+An opinionated, batteries-included text editor. It supports themes and plugins, but you probably won’t need them. Out of the box, ADM looks great and comes with a built-in file explorer, Git manager, a powerful integrated search tool (blazing fast), syntax highlighting, and LSP support.
 
 ![adm ScreenShot](res/ss.png)
 
 ## Overview
 
 - **Emacs inspired controls**
-- **Splits**
-- **Tabs with independent split layouts**
-- **Sidebar**
+- **Splits & Tabs**
 - **File Explorer**
 - **Git Manager**
 - **Editing tools**
-- **Syntax colours and optional LSP support**
+- **Syntax highlighting and LSP**
 - **Configurable themes**
-- **C plugins and User Center**
+- **Plugins**
 
 ## Build and run
 
