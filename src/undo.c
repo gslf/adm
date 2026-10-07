@@ -783,13 +783,13 @@ static void changed(editor *e) {
   if (e->undo && !e->undo->depth)
     commit(e);
 }
-static void shutdown(editor *e) {
+static void undo_shutdown(editor *e) {
   commit(e);
   free(e->undo);
   e->undo = NULL;
 }
 static module undo = {
-    .name = "undo", .init = init, .on_change = changed, .shutdown = shutdown};
+    .name = "undo", .init = init, .on_change = changed, .shutdown = undo_shutdown};
 module *undo_module(void) { return &undo; }
 
 void undo_status(const document *doc, undo_stats *stats) {

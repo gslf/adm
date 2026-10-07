@@ -299,7 +299,7 @@ static void init(editor *e) {
   if (c->error[0])
     snprintf(e->notice, sizeof e->notice, "%s", c->error);
 }
-static void shutdown(editor *e) {
+static void plugins_shutdown(editor *e) {
   if (!e->plugins)
     return;
   for (int i = 0; i < ADM_COMMAND_LIMIT; i++)
@@ -312,6 +312,6 @@ static void shutdown(editor *e) {
 }
 module *plugins_module(void) {
   static module m = {
-      .name = "plugins", .init = init, .on_draw = draw, .shutdown = shutdown};
+      .name = "plugins", .init = init, .on_draw = draw, .shutdown = plugins_shutdown};
   return &m;
 }

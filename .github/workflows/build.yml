@@ -1,0 +1,23 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build editor
+        shell: bash
+        run: make CFLAGS="-std=c11 -Wall -Wextra -Werror -O2 -D_DEFAULT_SOURCE"
+
+      - name: Build example plugin
+        shell: bash
+        run: cc -std=c11 -Wall -Wextra -Werror -O2 -shared -Isrc plugins/timestamp.c -o timestamp.dll

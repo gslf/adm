@@ -196,7 +196,8 @@ static FILE *regular_file(const char *path, struct stat *info) {
       attrs & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY))
     return NULL;
   FILE *fp = fopen(path, "rb");
-  if (fp && (_fstat(_fileno(fp), info) < 0 ||
+  // Use the MinGW stat/fstat pair: _fstat requires a different CRT struct.
+  if (fp && (fstat(_fileno(fp), info) < 0 ||
              (info->st_mode & _S_IFMT) != _S_IFREG)) {
     fclose(fp);
     fp = NULL;
@@ -412,7 +413,7 @@ static void scan_file(search_job *j, const char *path,
     ok = 0;
   struct stat after;
 #ifdef _WIN32
-  if (_fstat(_fileno(fp), &after) < 0 || !same_file(&original, &after))
+  if (fstat(_fileno(fp), &after) < 0 || !same_file(&original, &after))
     ok = 0;
 #else
   if (fstat(fileno(fp), &after) < 0 || !same_file(&original, &after))

@@ -822,7 +822,7 @@ static void init(editor *e) {
                               "Search and replace in workspace");
   dispatch_bind_prefix('l', goto_begin, "l", "Go to Line");
 }
-static void shutdown(editor *e) {
+static void search_shutdown(editor *e) {
   if (e->search) {
     if (e->search->phase == FILE_REPLACING) undo_group_end(e);
     stop(e->search);
@@ -834,5 +834,5 @@ static module search = {.name = "search",
                         .init = init,
                         .on_key = on_key,
                         .on_draw = on_draw,
-                        .shutdown = shutdown};
+                        .shutdown = search_shutdown};
 module *search_module(void) { return &search; }

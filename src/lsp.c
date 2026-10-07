@@ -1201,7 +1201,7 @@ static void definition_opened(editor *e, int result) {
   dispatch_change(e);
   clear_popup(e->lsp);
 }
-static void accept(editor *e) {
+static void lsp_accept(editor *e) {
   struct lsp_state *l = e->lsp;
   if (l->selected < 0 || (size_t)l->selected >= l->count)
     return;
@@ -1434,7 +1434,7 @@ int lsp_key(editor *e, int key) {
       else if (l->selected > 0)
         l->selected--;
     } else if (key == '\r' && l->popup != 1)
-      accept(e);
+      lsp_accept(e);
     return 1;
   }
   if (!l->menu) {
@@ -1622,7 +1622,7 @@ static void init(editor *e) {
   e->syntax_enabled = 1;
   e->lsp = calloc(1, sizeof *e->lsp);
 }
-static void shutdown(editor *e) {
+static void lsp_shutdown(editor *e) {
   if (!e->lsp)
     return;
   cancel_request(e->lsp);
@@ -1638,5 +1638,5 @@ static module lsp = {.name = "lsp",
                      .init = init,
                      .on_key = lsp_key,
                      .on_draw = draw,
-                     .shutdown = shutdown};
+                     .shutdown = lsp_shutdown};
 module *lsp_module(void) { return &lsp; }
