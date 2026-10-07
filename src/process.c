@@ -2,15 +2,27 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <pthread.h>
 #include <sys/wait.h>
+#include <spawn.h>
+extern char **environ;
 #include <time.h>
 #include <unistd.h>
+#endif
+
+#ifdef _WIN32
+typedef struct input_write {
+  OVERLAPPED operation;
+  char chunk[65536];
+  int pending;
+} input_write;
 #endif
 
 #define OUTPUT_LIMIT (8 * 1024 * 1024)
@@ -142,9 +154,10 @@ fail:
 }
 #endif
 
-int process_start(child_process *p, const char *const argv[], const char *const env[]) {
+static int start(child_process *p, const char *const argv[], const char *const env[], int duplex) {
   process_dispose(p);
   p->exit_code = -1;
+  p->duplex = duplex;
 #ifdef _WIN32
   HANDLE out = NULL, err = NULL, input = INVALID_HANDLE_VALUE;
   char *line = command_line(argv), *environment = environment_block(env);
@@ -152,7 +165,21 @@ int process_start(child_process *p, const char *const argv[], const char *const 
       make_pipe(&p->err, &err) < 0)
     goto fail;
   SECURITY_ATTRIBUTES attributes = {sizeof attributes, NULL, TRUE};
-  input = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+  if (duplex) {
+    static unsigned serial;
+    char name[128];
+    snprintf(name, sizeof name, "\\\\.\\pipe\\adm-lsp-%lu-%u", (unsigned long)GetCurrentProcessId(), ++serial);
+    HANDLE writer = CreateNamedPipeA(name, PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
+                         PIPE_TYPE_BYTE | PIPE_WAIT, 1, 65536, 65536, 0, NULL);
+    if (writer == INVALID_HANDLE_VALUE) goto fail;
+    p->in.handle = (intptr_t)writer; p->in.open = 1;
+    input = CreateFileA(name, GENERIC_READ, 0, &attributes, OPEN_EXISTING, 0, NULL);
+    if (input == INVALID_HANDLE_VALUE) goto fail;
+    p->input_state = calloc(1, sizeof(input_write));
+    if (!p->input_state) goto fail;
+    ((input_write *)p->input_state)->operation.hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (!((input_write *)p->input_state)->operation.hEvent) goto fail;
+  } else input = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
                        &attributes, OPEN_EXISTING, 0, NULL);
   if (input == INVALID_HANDLE_VALUE)
     goto fail;
@@ -186,7 +213,7 @@ int process_start(child_process *p, const char *const argv[], const char *const 
   free(line);
   free(environment);
 #else
-  int out[2], err[2];
+  int out[2], err[2], input_pipe[2] = {-1, -1};
   if (pipe(out) < 0)
     return -1;
   if (pipe(err) < 0) {
@@ -194,15 +221,45 @@ int process_start(child_process *p, const char *const argv[], const char *const 
     close(out[1]);
     return -1;
   }
-  pid_t pid = fork();
+  if (duplex && pipe(input_pipe) < 0) {
+    close(out[0]); close(out[1]); close(err[0]); close(err[1]); return -1;
+  }
+  pid_t pid = -1;
+  if (duplex) {
+    // Search workers may be allocating concurrently. posix_spawn avoids
+    // running allocator or environment code in a forked multi-threaded child.
+    posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attributes;
+    int error = posix_spawn_file_actions_init(&actions);
+    if (!error) {
+      error = posix_spawnattr_init(&attributes);
+      if (!error) {
+        error = posix_spawn_file_actions_adddup2(&actions, input_pipe[0], 0);
+        if (!error) error = posix_spawn_file_actions_adddup2(&actions, out[1], 1);
+        if (!error) error = posix_spawn_file_actions_adddup2(&actions, err[1], 2);
+        int descriptors[] = {input_pipe[0], input_pipe[1], out[0], out[1], err[0], err[1]};
+        for (int i = 0; !error && i < 6; i++)
+          if (descriptors[i] > 2)
+            error = posix_spawn_file_actions_addclose(&actions, descriptors[i]);
+        if (!error) error = posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP);
+        if (!error) error = posix_spawnattr_setpgroup(&attributes, 0);
+        if (!error) error = posix_spawnp(&pid, argv[0], &actions, &attributes,
+                                       (char *const *)argv, environ);
+        posix_spawnattr_destroy(&attributes);
+      }
+      posix_spawn_file_actions_destroy(&actions);
+    }
+    if (error) { errno = error; pid = -1; }
+  } else pid = fork();
   if (pid == 0) {
     setsid();
-    int input = open("/dev/null", O_RDONLY);
+    int input = duplex ? input_pipe[0] : open("/dev/null", O_RDONLY);
     if (input < 0 || dup2(input, 0) < 0 || dup2(out[1], 1) < 0 || dup2(err[1], 2) < 0)
       _exit(127);
     if (input > 2)
       close(input);
     close(out[0]); close(out[1]); close(err[0]); close(err[1]);
+    if (duplex) close(input_pipe[1]);
     for (int i = 0; env && env[i]; i++) {
       const char *equal = strchr(env[i], '=');
       char key[128];
@@ -219,9 +276,11 @@ int process_start(child_process *p, const char *const argv[], const char *const 
   }
   close(out[1]);
   close(err[1]);
+  if (duplex) close(input_pipe[0]);
   if (pid < 0) {
     close(out[0]);
     close(err[0]);
+    if (duplex) close(input_pipe[1]);
     return -1;
   }
   p->id = p->group = pid;
@@ -229,6 +288,11 @@ int process_start(child_process *p, const char *const argv[], const char *const 
   p->out.handle = out[0];
   p->err.handle = err[0];
   p->out.open = p->err.open = 1;
+  if (duplex) {
+    p->in.handle = input_pipe[1]; p->in.open = 1;
+    if (fcntl(input_pipe[1], F_SETFL, O_NONBLOCK) < 0) { process_dispose(p); return -1; }
+    fcntl(input_pipe[1], F_SETFD, FD_CLOEXEC);
+  }
   if (fcntl(out[0], F_SETFL, O_NONBLOCK) < 0 || fcntl(err[0], F_SETFL, O_NONBLOCK) < 0) {
     process_dispose(p);
     return -1;
@@ -248,6 +312,69 @@ fail:
   free(environment);
   process_dispose(p);
   return -1;
+#endif
+}
+
+int process_start(child_process *p, const char *const argv[], const char *const env[]) {
+  return start(p, argv, env, 0);
+}
+int process_start_duplex(child_process *p, const char *const argv[]) {
+  return start(p, argv, NULL, 1);
+}
+void process_consume(process_stream *stream, size_t bytes) {
+  if (!stream->data) return;
+  if (bytes > stream->length) bytes = stream->length;
+  memmove(stream->data, stream->data + bytes, stream->length - bytes);
+  stream->length -= bytes;
+  if (stream->data) stream->data[stream->length] = 0;
+}
+int process_send(child_process *p, const char *data, size_t bytes) {
+  if (!p->running || !p->in.open || p->failed || p->cancelled) return -1;
+  return append(&p->in, data, bytes);
+}
+#ifndef _WIN32
+// Suppress SIGPIPE for this write only; never alter the editor's signal handlers.
+static ssize_t pipe_write(int fd, const char *data, size_t n) {
+  sigset_t blocked, old, pending;
+  sigemptyset(&blocked); sigaddset(&blocked, SIGPIPE);
+  if (pthread_sigmask(SIG_BLOCK, &blocked, &old)) return -1;
+  sigpending(&pending); int was_pending = sigismember(&pending, SIGPIPE);
+  ssize_t result = write(fd, data, n); int error = errno;
+  if (result < 0 && error == EPIPE && !was_pending && !sigismember(&old, SIGPIPE)) {
+    sigpending(&pending);
+    if (sigismember(&pending, SIGPIPE)) {
+      int received;
+      sigwait(&blocked, &received);
+    }
+  }
+  pthread_sigmask(SIG_SETMASK, &old, NULL); errno = error; return result;
+}
+#endif
+static void flush_input(child_process *p) {
+  if (!p->in.open || !p->in.length || p->cancelled) return;
+#ifdef _WIN32
+  input_write *w = p->input_state;
+  if (!w) return;
+  DWORD bytes = 0;
+  if (w->pending) {
+    if (!GetOverlappedResult((HANDLE)p->in.handle, &w->operation, &bytes, FALSE)) {
+      if (GetLastError() == ERROR_IO_INCOMPLETE) return;
+      p->failed = 1; return;
+    }
+    w->pending = 0; process_consume(&p->in, bytes);
+    return;
+  }
+  size_t n = p->in.length < sizeof w->chunk ? p->in.length : sizeof w->chunk;
+  memcpy(w->chunk, p->in.data, n); ResetEvent(w->operation.hEvent);
+  if (!WriteFile((HANDLE)p->in.handle, w->chunk, (DWORD)n, &bytes, &w->operation)) {
+    if (GetLastError() == ERROR_IO_PENDING) w->pending = 1;
+    else p->failed = 1;
+  } else process_consume(&p->in, bytes);
+#else
+  size_t n = p->in.length < 65536 ? p->in.length : 65536;
+  ssize_t bytes = pipe_write((int)p->in.handle, p->in.data, n);
+  if (bytes > 0) process_consume(&p->in, (size_t)bytes);
+  else if (bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) p->failed = 1;
 #endif
 }
 
@@ -306,7 +433,8 @@ void process_cancel(child_process *p) {
 }
 
 int process_poll(child_process *p) {
-  if (!p->cancelled && p->started && milliseconds() - p->started > PROCESS_TIMEOUT)
+  flush_input(p);
+  if (!p->duplex && !p->cancelled && p->started && milliseconds() - p->started > PROCESS_TIMEOUT)
     process_cancel(p);
 #ifndef _WIN32
   if (p->cancelled && milliseconds() - p->cancel_started > 1000) {
@@ -368,12 +496,26 @@ void process_dispose(child_process *p) {
     }
 #endif
   }
+#ifdef _WIN32
+  input_write *w = p->input_state;
+  if (w) {
+    if (w->pending && p->in.open) {
+      CancelIoEx((HANDLE)p->in.handle, &w->operation);
+      DWORD bytes;
+      GetOverlappedResult((HANDLE)p->in.handle, &w->operation, &bytes, TRUE);
+    }
+    if (w->operation.hEvent) CloseHandle(w->operation.hEvent);
+    free(w);
+  }
+#endif
+  close_stream(&p->in);
   close_stream(&p->out);
   close_stream(&p->err);
 #ifdef _WIN32
   if (p->group) CloseHandle((HANDLE)p->group);
   if (p->handle) CloseHandle((HANDLE)p->handle);
 #endif
+  free(p->in.data);
   free(p->out.data);
   free(p->err.data);
   *p = (child_process){0};

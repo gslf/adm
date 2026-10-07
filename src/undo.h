@@ -22,4 +22,13 @@ void undo_end(struct editor *e);
 void undo_group_begin(struct editor *e);
 void undo_group_end(struct editor *e);
 void undo_note_edit(buffer *b, const buffer_edit *edit);
+struct undo_transaction;
+struct undo_transaction *undo_prepare(struct editor *e, struct document *doc,
+                                      const buffer_edit *edit, const char *text,
+                                      size_t bytes, int after_lines,
+                                      const buffer_edit *events,
+                                      size_t event_count);
+void undo_commit_prepared(struct editor *e,
+                          struct undo_transaction *transaction);
+void undo_discard_prepared(struct undo_transaction *transaction);
 #endif

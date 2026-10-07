@@ -42,6 +42,13 @@ C-z / M-z  Undo / redo (also C-x z / C-x Z)
 C-x C-s    Save; C-x C-c quits
 Quick tab/split creation also works in MOVE.
 
+M-x        LSP menu (Alt-x or Esc then x)
+s/x/r      Start / stop / restart language server
+h/d/c      Symbol information / definition / completion
+n/p        Next / previous diagnostic
+N/f        Rename symbol / format current file
+a/t/?      Automatic startup / syntax colours / LSP help
+
 Up/Down or PgUp/PgDown scroll; ESC closes this help
 ```
 
@@ -73,6 +80,7 @@ Up/Down or PgUp/PgDown scroll; ESC closes this help
 | C-b | Focus sidebar |
 | C-n / C-p | Next / previous tab |
 | C-x ? | Navigation help |
+| M-x | Separate LSP menu (Alt-x or Esc then x) |
 | C-x ] / C-x [ | Grow / shrink split height |
 | C-x } / C-x { | Grow / shrink sidebar width when focused; otherwise split width |
 | C-x c | Close current split |
@@ -288,3 +296,97 @@ Windows reparse points and special devices are excluded. Workspace replacement
 skips hard-linked files to preserve aliases and shared-buffer consistency. NUL-containing binary
 files, unreadable or changing files are skipped and reported; temporary-index
 failures produce an explicit error instead of claiming a complete count.
+
+
+## Languages, syntax colours and LSP
+
+adm detects C, C++, JavaScript, Rust and Python from the filename extension.
+Syntax colours are enabled by default and work without a language server.
+Headers `.h` use C; `.hpp`, `.hh` and `.hxx` use C++. JavaScript includes `.js`,
+`.mjs`, `.cjs` and `.jsx`; Python includes `.py`, `.pyw` and `.pyi`.
+The highlighter is a lightweight lexical scanner for keywords, types, strings,
+comments, numbers, directives and function names, rather than a semantic parser.
+
+`M-x` opens the separate **LSP** menu. It uses ordinary Alt-x, or Esc followed
+immediately by x, over SSH; no extended keyboard protocol is required.
+The commands refer to the document in the current split, including when the
+sidebar has focus. LSP commands are not in the `C-x` Command Center.
+
+| Key after M-x | Action |
+|---------------|--------|
+| s | Start the current language's server |
+| x | Stop that server |
+| r | Restart that server |
+| h | Show information about the symbol at the cursor |
+| d | Show definitions; select with Up/Down and open with Enter |
+| c | Request completion; select with Up/Down and insert with Enter |
+| n / p | Next / previous diagnostic, wrapping at the ends |
+| N | Rename the symbol at the cursor; enter its new name in the bottom bar |
+| f | Format the current file, using four-space indentation options |
+| a | Toggle automatic startup for languages in visible tabs and splits |
+| t | Toggle syntax colours |
+| ? | Show LSP help |
+| Esc / C-g | Close the menu or result, cancel a name prompt or pending request |
+
+Hover information and help scroll with Up/Down. Menus scroll to fit small
+terminals. Diagnostics display the server's message and severity in the bottom
+bar. Servers can decline individual features; adm reports that without changing
+text. Names and other language-specific rules are validated by the server.
+
+Servers are started on demand with `M-x s`. Automatic startup is initially off;
+`M-x a` enables it for this editor session. Stopping a server suppresses automatic
+restart until it is explicitly started, restarted, or automatic startup is
+re-enabled. C and C++ share one clangd session. The workspace root is always the
+folder from which adm was launched, regardless of the File Explorer's location.
+
+Install the appropriate server separately and make its executable available on
+`PATH`, or set the corresponding environment variable to its executable path:
+
+| Language | Default command | Executable override | Server documentation |
+|----------|-----------------|---------------------|----------------------|
+| C / C++ | `clangd --log=error` | `ADM_LSP_CLANGD` | [clangd installation and project setup](https://clangd.llvm.org/installation) |
+| JavaScript | `typescript-language-server --stdio` | `ADM_LSP_JAVASCRIPT` | [TypeScript Language Server](https://github.com/typescript-language-server/typescript-language-server) |
+| Rust | `rust-analyzer` | `ADM_LSP_RUST` | [rust-analyzer installation](https://rust-analyzer.github.io/book/installation.html) |
+| Python | `pylsp` | `ADM_LSP_PYTHON` | [Python LSP Server](https://github.com/python-lsp/python-lsp-server) |
+
+Overrides contain an executable path, not a shell command; adm keeps the listed
+arguments. For JavaScript, the server also needs Node.js and TypeScript installed.
+On Windows adm resolves the npm `.cmd` launcher to its adjacent package and
+runs Node directly. `ADM_LSP_JAVASCRIPT` may also point to the package's
+`lib/cli.mjs` (or a `.js` entry point) on either platform. C/C++
+projects should provide `compile_commands.json` as described in clangd's guide.
+A missing or crashed server leaves editing and syntax colours available.
+
+A document shared by several tabs or splits is synchronized once, with
+incremental changes where supported. UTF-8 and UTF-16 position encodings are
+negotiated. Changes from typing, Undo, Redo, completion, rename and formatting
+share the same buffer. Closing its last split sends `didClose` and releases
+its LSP and highlighting data along with the document.
+
+Completion, rename and formatting create undoable, unsaved buffer edits.
+A multi-file rename prepares and validates **every** affected file before
+changing any text. Previously unopened files appear in new visible tabs;
+there are no persistent hidden buffers or automatic disk writes. Save each
+changed document normally. Undo/Redo operates per document, so a rename across
+several files is undone separately in each one. Responses for changed documents,
+moved cursors or different splits are ignored. Open documents participating in
+rename must still match the versions captured when the request was sent.
+
+To keep memory and input latency bounded, LSP synchronization pauses for
+files larger than **1 MiB** or containing invalid UTF-8. They remain editable;
+syntax highlighting continues within its own budget. Colouring scans at most
+256 KiB and approximately 2 ms per preparation call, caches multiline state in
+the shared document and updates it after edits. Lines over 64 KiB display as
+plain text; a jump into an uncached part of a large file can initially use local
+colouring until the multiline state catches up.
+
+This first LSP implementation supports text edits rather than file creation,
+renaming or deletion operations. Workspace edits are limited to 128 files,
+8,192 edits, 8 MiB per affected file and 32 MiB of original text overall; JSON-RPC
+messages and queued input are capped at 8 MiB. Overlapping edits, invalid
+positions, stale versions or changed disk files are rejected as a whole.
+Completion snippets and additional edits are declined, rather than partially
+applied. Initialization and interactive requests time out, and server I/O uses
+bounded, nonblocking queues so a server cannot block typing.
+
+See [LANGUAGES.md](LANGUAGES.md) for adding a language adapter to the shared registry.

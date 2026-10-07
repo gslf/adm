@@ -77,6 +77,13 @@ static const char *help_lines[] = {
   "C-x C-s    Save; C-x C-c quits",
   "Quick tab/split creation also works in MOVE.",
   "",
+  "M-x        LSP menu (Alt-x or Esc then x)",
+  "s/x/r      Start / stop / restart language server",
+  "h/d/c      Symbol information / definition / completion",
+  "n/p        Next / previous diagnostic",
+  "N/f        Rename symbol / format current file",
+  "a/t/?      Automatic startup / syntax colours / LSP help",
+  "",
   "Up/Down or PgUp/PgDown scroll; ESC closes this help"
 };
 #define HELP_COUNT ((int)(sizeof help_lines / sizeof help_lines[0]))

@@ -13,6 +13,7 @@ A small terminal text editor for POSIX and Windows, built with C11.
 - **File Explorer**
 - **Git Manager**
 - **Editing tools**
+- **Syntax colours and optional LSP support**
 
 ## Build and run
 

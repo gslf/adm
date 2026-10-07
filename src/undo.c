@@ -465,6 +465,86 @@ static void commit(editor *e) {
   }
   compact(h);
 }
+struct undo_transaction {
+  document *doc;
+  undo_group *group;
+  uint64_t journal_before, journal_after;
+};
+struct undo_transaction *undo_prepare(editor *e, document *doc,
+                                      const buffer_edit *edit, const char *text,
+                                      size_t bytes, int after_lines,
+                                      const buffer_edit *events,
+                                      size_t event_count) {
+  struct undo_history *h = history(doc);
+  if (!h || h->pending || !e->undo || e->undo->hold)
+    return NULL;
+  struct undo_transaction *t = calloc(1, sizeof *t);
+  undo_group *g = calloc(1, sizeof *g);
+  undo_edit *r = calloc(1, sizeof *r);
+  if (!t || !g || !r) {
+    free(t);
+    free(g);
+    free(r);
+    return NULL;
+  }
+  uint64_t offset = h->offset, removed = 0;
+  if (!removed_text(&doc->buf, edit, h, &removed) ||
+      !write_bytes(h, text, bytes) ||
+      (event_count &&
+       !write_bytes(h, (const char *)events, event_count * sizeof *events)) ||
+      fflush(h->journal)) {
+    h->offset = offset;
+    clearerr(h->journal);
+    free(t);
+    free(g);
+    free(r);
+    return NULL;
+  }
+  g->before = (view){.doc = doc, .used = 1, .cy = edit->row, .cx = edit->col};
+  for (editor_tab *tab = e->tabs; tab; tab = tab->next) {
+    workspace *w = tabs_workspace(e, tab);
+    for (int i = 0; i < MAX_PANES; i++)
+      if (w->panes[i].doc == doc) {
+        g->before = w->panes[i];
+        break;
+      }
+  }
+  if (e->view->doc == doc)
+    g->before = *e->view;
+  *r = (undo_edit){.span = *edit,
+                   .old_offset = offset,
+                   .new_offset = offset + removed,
+                   .old_bytes = removed,
+                   .new_bytes = bytes,
+                   .before_empty = !doc->buf.nlines,
+                   .after_empty = !after_lines,
+                   .external = event_count != 0,
+                   .hints = event_count,
+                   .hints_offset = offset + removed + bytes};
+  g->first = g->last = r;
+  g->count = 1;
+  g->before_state = h->state;
+  t->doc = doc;
+  t->group = g;
+  t->journal_before = offset;
+  t->journal_after = h->offset;
+  return t;
+}
+void undo_discard_prepared(struct undo_transaction *t) {
+  if (t) {
+    if (t->doc->history && t->doc->history->offset == t->journal_after)
+      t->doc->history->offset = t->journal_before;
+    free_group(t->group);
+    free(t);
+  }
+}
+void undo_commit_prepared(editor *e, struct undo_transaction *t) {
+  struct undo_history *h = t->doc->history;
+  h->pending = t->group;
+  e->undo->active = t->doc;
+  commit(e);
+  free(t);
+}
 void undo_saved(document *doc) {
   if (doc && doc->history)
     doc->history->saved = doc->history->state;

@@ -22,6 +22,8 @@ typedef struct editor {
   file_manager files;
   struct search_state *search;
   struct undo_state *undo;
+  struct lsp_state *lsp;
+  int syntax_enabled;
   sidebar sidebar;
   git_panel git;
   document_request open_request;

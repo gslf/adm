@@ -30,6 +30,15 @@ int main(int argc, char **argv) {
     fputs("separate stderr\n", stderr);
     return 0;
   }
+  if (argc > 1 && !strcmp(argv[1], "--echo")) {
+    char chunk[4096];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof chunk, stdin))) {
+      assert(fwrite(chunk, 1, n, stdout) == n);
+      fflush(stdout);
+    }
+    return 0;
+  }
   if (argc > 1 && !strcmp(argv[1], "--wait")) {
     for (int i = 0; i < 2000; i++)
       pause_tick();
@@ -43,14 +52,33 @@ int main(int argc, char **argv) {
     return 0;
   }
   child_process process = {0};
-  const char *args[] = {argv[0], "--child", "space \"quote\" $() ; trailing\\", "", NULL};
+  const char *args[] = {argv[0], "--child", "space \"quote\" $() ; trailing\\",
+                        "", NULL};
   const char *env[] = {"ADM_PROCESS_TEST=child only", NULL};
   assert(process_start(&process, args, env) == 0);
   settle(&process);
   assert(process.exit_code == 0 && !process.failed && !process.cancelled);
-  assert(process.out.length == strlen(args[2]) + 2 && !strcmp(process.out.data, args[2]));
+  assert(process.out.length == strlen(args[2]) + 2 &&
+         !strcmp(process.out.data, args[2]));
   assert(!strcmp(process.err.data, "separate stderr\n"));
   assert(!getenv("ADM_PROCESS_TEST"));
+  process_dispose(&process);
+
+  const char *echo[] = {argv[0], "--echo", NULL};
+  assert(process_start_duplex(&process, echo) == 0);
+  char input[4096];
+  memset(input, 'y', sizeof input);
+  for (int i = 0; i < 256; i++)
+    assert(process_send(&process, input, sizeof input) == 0);
+  for (int i = 0; i < 10000 && process.out.length < 1024 * 1024; i++) {
+    process_poll(&process);
+    pause_tick();
+  }
+  assert(process.out.length == 1024 * 1024 && !process.failed);
+  for (size_t i = 0; i < process.out.length; i++)
+    assert(process.out.data[i] == 'y');
+  process_consume(&process.out, process.out.length);
+  assert(!process.out.length && !process.out.data[0]);
   process_dispose(&process);
 
   const char *slow[] = {argv[0], "--wait", NULL};

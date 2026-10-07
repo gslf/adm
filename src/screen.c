@@ -3,6 +3,8 @@
 #include "cursor.h"
 #include "utf8.h"
 #include "path.h"
+#include "syntax.h"
+#include "lsp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -124,7 +126,7 @@ static const char *row_colours(const document *doc, int row) {
   }
 }
 
-static void draw_row(const view *v, abuf *ab, rect area, int y) {
+static void draw_row(const view *v, abuf *ab, rect area, int y, int highlight) {
   int row = v->rowoff + y;
   screen_position(ab, area.x, area.y + y);
   if (row >= v->doc->buf.nlines) {
@@ -155,6 +157,9 @@ static void draw_row(const view *v, abuf *ab, rect area, int y) {
     from = row == sr ? sc : 0;
     to = row == er ? ec : len + 1;
   }
+  syntax_span spans[256];
+  size_t span_count = highlight ? syntax_line(v->doc, row, spans, 256) : 0, span_index = 0;
+  syntax_kind previous_kind = SYNTAX_TEXT;
   int painted = 0, col = 0;
   for (int j = 0; ; ) {
     int inside = j >= from && j < to;
@@ -165,9 +170,14 @@ static void draw_row(const view *v, abuf *ab, rect area, int y) {
     if (col + w > v->coloff + width)
       break;
     if (col >= v->coloff || col + w > v->coloff) {
-      if (inside != painted) {
+      while (span_index < span_count && j >= spans[span_index].end) span_index++;
+      syntax_kind kind = span_index < span_count && j >= spans[span_index].start
+                           ? spans[span_index].kind : SYNTAX_TEXT;
+      if (inside != painted || (!inside && kind != previous_kind)) {
         append_str(ab, inside ? SELECT_ON : colours);
+        if (!inside && !v->doc->diff_lines) append_str(ab, syntax_colour(kind));
         painted = inside;
+        previous_kind = kind;
       }
       if (at_end || col < v->coloff)
         ab_append(ab, " ", 1);
@@ -182,7 +192,7 @@ static void draw_row(const view *v, abuf *ab, rect area, int y) {
       break;
     j = next;
   }
-  if (painted || v->doc->diff_lines)
+  if (painted || v->doc->diff_lines || span_count)
     append_str(ab, "\x1b[m");
 }
 
@@ -238,8 +248,9 @@ static void draw_pane(editor *e, abuf *ab, view *v, int ordinal) {
     return;
   }
   cursor_scroll_view(v, area.width - screen_gutter(v), area.height);
+  if (e->syntax_enabled) syntax_prepare(v->doc, v->rowoff + area.height);
   for (int y = 0; y < area.height; y++)
-    draw_row(v, ab, area, y);
+    draw_row(v, ab, area, y, e->syntax_enabled);
 }
 
 static void draw_workspace(editor *e, abuf *ab) {
@@ -371,12 +382,16 @@ void screen_refresh(editor *e) {
   rect area = layout_content(e, e->view);
   int gutter = screen_gutter(e->view);
   int prompt_x, prompt_y;
-  if (!e->move_active && !e->help_active && !e->prefix_active && !e->confirmation &&
+  if (lsp_cursor(e, &prompt_x, &prompt_y)) {
+    screen_position(&ab, prompt_x, prompt_y);
+    append_str(&ab, "\x1b[?25h");
+  }
+  if (!e->move_active && !e->help_active && !e->prefix_active && !lsp_modal(e) && !e->confirmation &&
       (search_cursor(e, &prompt_x, &prompt_y) || new_file_cursor(e, &prompt_x, &prompt_y) || git_panel_cursor(e, &prompt_x, &prompt_y))) {
     screen_position(&ab, prompt_x, prompt_y);
     append_str(&ab, "\x1b[?25h");
   }
-  if (e->view->doc && !search_active(e) && !e->move_active && !e->help_active && !e->new_file.active && !e->prefix_active && !e->confirmation && !e->sidebar.focused &&
+  if (e->view->doc && !search_active(e) && !e->move_active && !e->help_active && !e->new_file.active && !e->prefix_active && !lsp_modal(e) && !e->confirmation && !e->sidebar.focused &&
       area.width > gutter && area.height > 0) {
     int x = area.x + gutter + cursor_col(e) - e->view->coloff;
     int y = area.y + e->view->cy - e->view->rowoff;

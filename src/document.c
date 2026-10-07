@@ -1,6 +1,8 @@
 #include "document.h"
 #include "path.h"
 #include "undo.h"
+#include "syntax.h"
+#include "lsp.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -97,6 +99,8 @@ void document_release(document *doc) {
   assert(doc->views > 0);
   if (--doc->views > 0)
     return;
+  lsp_detach(doc);
+  syntax_dispose(doc);
   undo_clear(doc);
   buffer_free(&doc->buf);
   free(doc->diff_lines);

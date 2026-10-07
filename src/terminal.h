@@ -10,5 +10,6 @@ int init_raw (void);
 void restore();
 termsize get_size(void);
 int term_resized(void);
+int term_wait(int milliseconds);
 
 #endif

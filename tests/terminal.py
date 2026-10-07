@@ -661,3 +661,76 @@ def run_undo(binary):
                 process.wait()
             os.close(master)
     print("Undo terminal regressions passed.")
+
+
+def run_lsp(binary):
+    with tempfile.TemporaryDirectory(prefix="adm-lsp-terminal-") as directory:
+        filename = Path(directory) / "doc.c"
+        original = 'int value = 42; // comment\nchar *text = "hello";\n'
+        filename.write_text(original)
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        environment = dict(os.environ, ADM_LSP_CLANGD=str(Path(directory) / "missing-server"))
+        process = subprocess.Popen([str(binary), filename.name], cwd=directory,
+                                   stdin=slave, stdout=slave, stderr=slave, env=environment)
+        os.close(slave)
+        terminal = Terminal(24, 80)
+
+        def update(keys=b""):
+            if keys:
+                os.write(master, keys)
+            terminal.feed(read_frame(master))
+            return "\n".join(terminal.lines())
+
+        def coloured(kind):
+            return any(kind in row for row in terminal.foregrounds[1:-1])
+
+        try:
+            text = update()
+            assert "int value = 42" in text and coloured(96) and coloured(93) and coloured(90)
+            menu = update(b"\x1bx")
+            assert "LSP  M-x" in menu and "Rename symbol" in menu and "Format file" in menu
+            assert not terminal.cursor_visible
+            update(b"t")
+            plain = update(b"\x1b")
+            assert "int value = 42" in plain and not coloured(96) and not coloured(93)
+            update(b"\x1bxt\x1b")
+            assert coloured(96)
+            update(b"\x1bxs")
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                menu = update(b"\x1bx")
+                if "unavailable" in menu or "Cannot start" in menu:
+                    break
+                update(b"\x1b")
+            assert ("unavailable" in menu or "Cannot start" in menu) and "int value = 42" == filename.read_text().split(';')[0]
+            update(b"\x1b")
+            update(b"\x1bxN")
+            assert "RENAME New name" in terminal.lines()[-1] and terminal.cursor_visible
+            update("nuovoè".encode())
+            assert "nuovoè" in terminal.lines()[-1]
+            update(b"\x1b[D\x7f")
+            assert "nuovè" in terminal.lines()[-1]
+            update(b"\x1b")
+            assert "int value = 42" in update()
+            for rows, cols in ((7, 24), (3, 8), (2, 3)):
+                fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                process.send_signal(signal.SIGWINCH)
+                read_frame(master)
+                terminal.resize(rows, cols)
+                update()
+                update(b"\x1bx")
+                update(b"\x1b[B\x1b[B\x1b")
+                update(b"\x1bxN")
+                update("è界".encode())
+                assert terminal.cursor_visible
+                update(b"\x1b")
+            update(b"\x18\x03")
+            assert process.wait(timeout=3) == 0
+            assert filename.read_text() == original
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+    print("LSP terminal regressions passed.")

@@ -187,3 +187,34 @@ void tabs_draw(const editor *e, abuf *ab, int width) {
   ab_append(ab, "\x1b[30;103m", 9);
   screen_repeat(ab, ' ', width - used);
 }
+
+// Prepare without touching the live layout; a workspace edit commits every tab
+// only after all text patches and undo records are ready.
+editor_tab *tabs_prepare_document(document *doc) {
+  editor_tab *tab = calloc(1, sizeof *tab);
+  if (!tab)
+    return NULL;
+  tab->windows.count = 1;
+  tab->windows.nodes[0] = (layout_node){
+      .used = 1, .parent = -1, .first = -1, .second = -1, .pane = 0};
+  tab->windows.panes[0] = (view){.used = 1};
+  view_bind_document(&tab->windows.panes[0], doc);
+  return tab;
+}
+void tabs_discard_document(editor_tab *tab) {
+  if (tab) {
+    view_dispose(&tab->windows.panes[0]);
+    free(tab);
+  }
+}
+void tabs_commit_document(editor *e, editor_tab *tab) {
+  tab->id = ++e->next_tab_id;
+  tab->windows.panes[0].revision = ++e->next_view_revision;
+  layout_bind_view(e, &tab->windows.panes[0], tab->windows.panes[0].doc);
+  editor_tab *tail = e->tabs;
+  while (tail->next)
+    tail = tail->next;
+  tail->next = tab;
+  tab->previous = tail;
+  e->tab_count++;
+}

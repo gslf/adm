@@ -7,6 +7,7 @@
 #include "navigation.h"
 #include "search.h"
 #include "undo.h"
+#include "lsp.h"
 
 #include <stdio.h>
 
@@ -77,6 +78,7 @@ static void cmd_save(editor *e) {
     e->notice[0] = '\0';
     e->view->doc->dirty = 0;
     undo_saved(e->view->doc);
+    lsp_saved(e->view->doc);
     if (e->sidebar.kind == SIDEBAR_GIT)
       git_panel_refresh(e);
   } else
@@ -296,6 +298,7 @@ void dispatch_init(editor *e) {
   dispatch_bind_prefix(CTRL('c'), cmd_quit, "C-c", "Quit");
 
   dispatch_register(undo_module());
+  dispatch_register(lsp_module());
   // Module init hooks.
   for (int i = 0; i < nmods; i++)
     if (mods[i]->init)
@@ -361,6 +364,7 @@ static void dispatch_key_impl(editor *e, int key) {
     return;
   }
 
+  if (lsp_modal(e) && lsp_key(e, key)) return;
   int slot = key_slot(key);
   if (e->move_active && !e->help_active && creation_key(key)) {
     if (cmds[slot])
@@ -519,6 +523,7 @@ void dispatch_shutdown(editor *e) {
 void dispatch_tick(editor *e) {
   git_panel_tick(e);
   search_tick(e);
+  lsp_tick(e);
 }
 
 // Modifier keys held down together with a special key. The terminal reports

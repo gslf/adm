@@ -7,6 +7,7 @@
 #include "clipboard.h"
 #include "search.h"
 #include "path.h"
+#include "lsp.h"
 
 int main(int argc, char *argv[]) {
   editor e = {0};
@@ -54,7 +55,7 @@ int main(int argc, char *argv[]) {
     dispatch_tick(&e);
     screen_refresh(&e);
 
-    int k = read_key();
+    int k = term_wait(lsp_busy(&e) ? 5 : 100) ? read_key() : KEY_NONE;
     if (k != KEY_NONE)
       dispatch_key(&e, k);
   }

@@ -1,6 +1,7 @@
 #include "layout.h"
 #include "dispatch.h"
 #include "undo.h"
+#include "syntax.h"
 
 #include <string.h>
 
@@ -207,6 +208,8 @@ void layout_move(editor *e, int dx, int dy) {
 static void buffer_edited(buffer *b, const buffer_edit *edit, void *context) {
   editor *e = context;
   undo_note_edit(b, edit);
+  document *doc = b->change_context;
+  if (doc) { doc->change_id++; syntax_invalidate(doc, edit); }
   // Editing commands move the active cursor; the observer rebases other views.
   for (editor_tab *tab = e->tabs; tab; tab = tab->next) {
     workspace *w = tabs_workspace(e, tab);

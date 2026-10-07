@@ -1,5 +1,6 @@
 #include "documents.h"
 #include "undo.h"
+#include "syntax.h"
 #include "dispatch.h"
 #include "git_panel.h"
 #include "path.h"
@@ -210,6 +211,8 @@ void documents_reload(editor *e, const char *root) {
         continue;
       next.on_edit = doc->buf.on_edit;
       next.edit_context = doc->buf.edit_context;
+      syntax_dispose(doc);
+      doc->change_id++;
       undo_clear(doc);
       buffer_free(&doc->buf);
       doc->buf = next;

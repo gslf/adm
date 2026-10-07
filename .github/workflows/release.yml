@@ -42,12 +42,12 @@ jobs:
           NAME="adm-${VERSION}-${{ matrix.target }}"
           mkdir -p dist
           if [ -f adm.exe ]; then
-            cp adm.exe LICENSE README.md dist/
-            cd dist && 7z a "${NAME}.zip" adm.exe LICENSE README.md
+            cp adm.exe LICENSE README.md HELP.md LANGUAGES.md dist/
+            cd dist && 7z a "${NAME}.zip" adm.exe LICENSE README.md HELP.md LANGUAGES.md
           else
             strip adm
-            cp adm LICENSE README.md dist/
-            cd dist && tar czf "${NAME}.tar.gz" adm LICENSE README.md
+            cp adm LICENSE README.md HELP.md LANGUAGES.md dist/
+            cd dist && tar czf "${NAME}.tar.gz" adm LICENSE README.md HELP.md LANGUAGES.md
           fi
 
       - name: Upload artifact

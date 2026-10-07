@@ -22,4 +22,8 @@ void tabs_bindings(void);
 struct abuf;
 void tabs_draw(const struct editor *e, struct abuf *ab, int width);
 
+struct editor_tab *tabs_prepare_document(struct document *doc);
+void tabs_commit_document(struct editor *e, struct editor_tab *tab);
+void tabs_discard_document(struct editor_tab *tab);
+
 #endif

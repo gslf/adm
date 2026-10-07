@@ -90,9 +90,9 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
     flags = shlex.split(os.environ.get("CFLAGS", "-std=c11 -Wall -Wextra -O2 -D_DEFAULT_SOURCE"))
     if os.name == "posix" and "-pthread" not in flags:
         flags.append("-pthread")
-    for suite in ("pattern", "search", "undo", "controls", "navigation", "splits", "tabs", "empty_views", "large_files", "lifecycle", "file_manager", "process", "diff", "git", "git_initial"):
+    for suite in ("languages", "lsp", "lsp_edits", "pattern", "search", "undo", "controls", "navigation", "splits", "tabs", "empty_views", "large_files", "lifecycle", "file_manager", "process", "diff", "git", "git_initial"):
         binary = Path(directory) / suite
-        subprocess.run(compiler + flags + (["-DADM_TEST_ALLOC"] if suite == "undo" else []) + ["-I", str(root / "src"), "-o", str(binary),
+        subprocess.run(compiler + flags + (["-DADM_TEST_ALLOC"] if suite in ("undo", "lsp_edits") else []) + ["-I", str(root / "src"), "-o", str(binary),
                                          str(root / "tests" / f"{suite}.c")]
                        + [str(p) for p in sources], check=True)
         environment = dict(os.environ, PATH="")
@@ -163,12 +163,13 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
                 working_directory, "log", "--all", "--format=%s")
         print(f"{suite.capitalize()} regressions passed.")
     if os.name == "posix":
-        from terminal import run, run_empty, run_file_manager, run_git, run_search, run_undo
+        from terminal import run, run_empty, run_file_manager, run_git, run_search, run_undo, run_lsp
         binary = Path(directory) / "adm"
         subprocess.run(compiler + flags + ["-o", str(binary), str(root / "src" / "main.c")]
                        + [str(p) for p in sources], check=True)
         run(binary)
         run_undo(binary)
+        run_lsp(binary)
         run_search(binary)
         run_empty(binary)
         run_file_manager(binary)

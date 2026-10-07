@@ -7,6 +7,9 @@
 typedef struct document {
   buffer buf;
   struct undo_history *history;
+  struct syntax_cache *syntax;
+  struct lsp_document *lsp;
+  unsigned long long change_id;
   const char *filename;
   int dirty;
   int views;

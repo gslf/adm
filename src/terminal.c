@@ -95,6 +95,7 @@ int term_resized(void){
 #else
 
 #include <termios.h>
+#include <poll.h>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/ioctl.h>
@@ -175,3 +176,28 @@ int term_resized(void){
 }
 
 #endif
+
+// Wait only for the first byte. Escape-sequence decoding retains its usual
+// timeout so Alt and arrow sequences work over ordinary SSH terminals.
+int term_wait(int milliseconds) {
+#ifdef _WIN32
+  HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+  DWORD start = GetTickCount();
+  do {
+    DWORD elapsed = GetTickCount() - start;
+    if (elapsed >= (DWORD)milliseconds) return 0;
+    if (WaitForSingleObject(input, (DWORD)milliseconds - elapsed) != WAIT_OBJECT_0)
+      return 0;
+    INPUT_RECORD record;
+    DWORD count;
+    if (!PeekConsoleInput(input, &record, 1, &count) || !count) return 0;
+    if (record.EventType == KEY_EVENT && record.Event.KeyEvent.bKeyDown)
+      return 1;
+    // Resize/focus/mouse events do not yield bytes through the CRT reader.
+    ReadConsoleInput(input, &record, 1, &count);
+  } while (1);
+#else
+  struct pollfd input = {STDIN_FILENO, POLLIN, 0};
+  return poll(&input, 1, milliseconds) > 0 && (input.revents & POLLIN);
+#endif
+}
