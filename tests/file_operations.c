@@ -167,6 +167,19 @@ int main(int argc, char **argv) {
   rename_file(&e, "renamed file.c", "Renamed file.c");
   assert(!e.new_file.active && !strcmp(path_name(doc->filename), "Renamed file.c"));
   assert(!strcmp(path_name(file_tree_selected(&e.files.tree)->path), "Renamed file.c"));
+  contents("Renamed file.c", "!alpha\n");
+
+#ifndef _WIN32
+  // A different directory entry is a collision even if it shares the inode.
+  assert(!link("Renamed file.c", "hardlink.txt"));
+  rename_file(&e, "Renamed file.c", "hardlink.txt");
+  assert(e.new_file.active && e.new_file.error[0]);
+  assert(!strcmp(path_name(doc->filename), "Renamed file.c"));
+  contents("Renamed file.c", "!alpha\n");
+  contents("hardlink.txt", "!alpha\n");
+  dispatch_key(&e, '\x1b');
+  assert(!unlink("hardlink.txt"));
+#endif
 
   // A buffer for a not-yet-created destination must not be silently replaced.
   char *reserved = path_absolute("reserved.txt");

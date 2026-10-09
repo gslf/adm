@@ -218,6 +218,9 @@ int file_rename(const char *source, const char *destination) {
     return 0;
   windows_error();
   return -1;
+#elif defined(__APPLE__)
+  // Exclusive rename supports case-only changes on case-insensitive volumes.
+  return renamex_np(source, destination, RENAME_EXCL);
 #else
 #if defined(__linux__) && defined(SYS_renameat2)
   // RENAME_NOREPLACE (1) is atomic and works on filesystems without hard links.
