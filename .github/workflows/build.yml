@@ -1,4 +1,4 @@
-name: Windows build
+name: Build and regressions
 
 on:
   push:
@@ -21,3 +21,19 @@ jobs:
       - name: Build example plugin
         shell: bash
         run: cc -std=c11 -Wall -Wextra -Werror -O2 -shared -Isrc plugins/timestamp.c -o timestamp.dll
+
+      - name: Run rendering regressions
+        shell: bash
+        run: CC=cc CFLAGS="-std=c11 -Wall -Wextra -Werror -O2 -D_DEFAULT_SOURCE" python tests/run_controls.py --suite config --suite file_manager --suite file_operations --suite screen --suite terminal_mode
+
+  unix:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build editor
+        run: make CFLAGS="-std=c11 -Wall -Wextra -Werror -O2 -D_DEFAULT_SOURCE"
+      - name: Run regressions and terminal tests
+        run: make test CFLAGS="-std=c11 -Wall -Wextra -Werror -O2 -D_DEFAULT_SOURCE"

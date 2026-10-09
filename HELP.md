@@ -21,6 +21,8 @@ Backspace deletes; Enter inserts a newline (C-j moves down).
 Text-entry prompts keep their own editing keys.
 
 C-x f      Open File Explorer with focus
+C-x n      Rename selected Explorer file
+C-x d      Delete selected Explorer file (confirmation)
 C-x g      Open Git Manager with focus
 C-x l      Go to Line
 C-s / C-x s  Search current file; C-x S searches workspace
@@ -93,6 +95,8 @@ Up/Down or PgUp/PgDown scroll; ESC closes this help
 | C-x N | Create a named file in an empty split |
 | C-x k | Close current tab and all its splits; the last tab quits |
 | C-x f | Open File Explorer with focus |
+| C-x n | Rename the selected file with Explorer focus |
+| C-x d | Delete the selected file with Explorer focus, after confirmation |
 | C-x g | Open Git Manager with focus |
 
 `C-x m` enters MOVE mode, shown in the bottom bar. Use `h/j/k/l` to focus the
@@ -204,6 +208,18 @@ between both modes and retained when reopening it or resizing the terminal;
 its displayed width is clamped to leave space for the editor.
 
 In the **File Explorer** the tree starts in the directory where adm was launched. Use arrows to navigate, expand and collapse folders. Enter toggles folders, opening a file with Enter targets the selected split and returns focus to the editor.
+
+With the Explorer focused and a file selected, the **C-x** command menu shows
+**n — Rename selected file** and **d — Delete selected file**.
+**C-x n** renames the selected file in its current folder.
+Edit the name and press Enter; Esc or C-g cancels. Existing destinations are never
+overwritten. Open tabs and splits retain their shared buffer, unsaved edits,
+undo history and cursor positions; saving uses the new path. Syntax and LSP
+are refreshed for the new filename, including extension changes.
+**C-x d** removes the selected file after confirmation with **y**.
+Any other key cancels. The confirmation explicitly warns about unsaved edits;
+accepting empties every split referencing that pathname, without closing the
+split or tab. These commands act on files only and retain expanded folders.
 
 In the **Git Manager**, Enter opens the selected staged or unstaged diff in the active split, in read-only mode, **o** opens the file for editing. Diffs show removed lines on dark red, added lines on dark green and unchanged context on grey. Git uses saved files, so commits include only staged changes.
 

@@ -37,6 +37,13 @@ int main(int argc, char **argv) {
   adm_config *c = config_load();
   assert(c && !c->error[0] && !c->count);
   assert(!strcmp(c->palette.colours[THEME_STATUS], "\x1b[30;103m"));
+#ifdef _WIN32
+  assert(!strcmp(c->palette.colours[THEME_SELECTION], "\x1b[0;30;43m"));
+  assert(!strcmp(c->palette.colours[THEME_ACTIVE], "\x1b[0;30;43m"));
+#else
+  assert(!strcmp(c->palette.colours[THEME_SELECTION], "\x1b[44;97m"));
+  assert(!strcmp(c->palette.colours[THEME_ACTIVE], "\x1b[97;44m"));
+#endif
   config_free(c);
   char *cwd = path_current_directory();
   assert(cwd);

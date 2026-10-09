@@ -22,5 +22,9 @@ void documents_shutdown(struct editor *e);
 int documents_editable(const struct editor *e);
 int documents_unsaved_in(const struct editor *e, const char *root);
 void documents_reload(struct editor *e, const char *root);
+// Match the saved pathname, rather than an inode/symlink alias.
+struct document *documents_at_path(const struct editor *e, const char *path);
+int documents_rename_file(struct editor *e, const char *source, const char *destination);
+int documents_delete_file(struct editor *e, const char *path);
 
 #endif

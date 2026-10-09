@@ -58,10 +58,9 @@ def run(binary, themes, library):
             update(b"\x18\x13")
             assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZint value = 42;\n", document.read_text())
             update(b"\x1bc")
+            terminal.resize(6, 28)
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 6, 28, 0, 0))
             process.send_signal(signal.SIGWINCH)
-            read_frame(master)
-            terminal.resize(6, 28)
             text = update()
             assert "USER CENTER" in text and "UTC timestamp" in text
             assert "USER Up/Dn Enter/key Esc" in terminal.lines()[-1]

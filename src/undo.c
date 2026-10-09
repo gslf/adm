@@ -156,8 +156,14 @@ static int write_bytes(struct undo_history *h, const char *s, size_t n) {
 #endif
   if (n > INT64_MAX || h->offset > INT64_MAX - n)
     return 0;
+#ifdef _WIN32
+  // The Windows CRT requires a positioning call between reading an undo/redo
+  // record and appending, even when the current offset is already correct.
+  if (seek(h->journal, (int64_t)h->offset, SEEK_SET))
+#else
   if (tell(h->journal) != (int64_t)h->offset &&
       seek(h->journal, (int64_t)h->offset, SEEK_SET))
+#endif
     return 0;
   if (n && fwrite(s, 1, n, h->journal) != n)
     return 0;

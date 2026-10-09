@@ -1,6 +1,9 @@
 #ifdef _WIN32
   #define _CRT_SECURE_NO_WARNINGS
   #include <windows.h>
+  #include <io.h>
+  #include <fcntl.h>
+  #include <stdint.h>
 #endif
 
 #include "fileio.h"
@@ -8,6 +11,10 @@
 #ifndef _WIN32
 #include <unistd.h>
 #include <sys/stat.h>
+#include <fcntl.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
 #endif
 
 #include <stdio.h>
@@ -29,6 +36,40 @@ static int replace(const char *tmp, const char *dst){
     return rename(tmp, dst);
 
   #endif
+}
+
+#ifdef _WIN32
+static void windows_error(void) {
+  DWORD error = GetLastError();
+  errno = error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS ? EEXIST :
+          error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ? ENOENT : EACCES;
+}
+#endif
+
+FILE *file_create(const char *path) {
+#ifdef _WIN32
+  // Some Windows C runtimes do not implement fopen's C11 "x" mode.
+  HANDLE handle = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_NEW,
+                              FILE_ATTRIBUTE_NORMAL, NULL);
+  if (handle == INVALID_HANDLE_VALUE) {
+    windows_error();
+    return NULL;
+  }
+  int fd = _open_osfhandle((intptr_t)handle, _O_WRONLY | _O_BINARY);
+  if (fd < 0) {
+    CloseHandle(handle);
+    remove(path);
+    return NULL;
+  }
+  FILE *stream = _fdopen(fd, "wb");
+  if (!stream) {
+    _close(fd);
+    remove(path);
+  }
+  return stream;
+#else
+  return fopen(path, "wbx");
+#endif
 }
 
 char *file_read(const char *path){
@@ -80,7 +121,7 @@ static int write_atomic(const char *path, const char *data, const buffer *b) {
 #ifdef _WIN32
   snprintf(tmp, length + 16, "%s.swp", path);
   // Exclusive creation avoids overwriting somebody else's swap file.
-  fp = fopen(tmp, "wbx");
+  fp = file_create(tmp);
 #else
   snprintf(tmp, length + 16, "%s.swp.XXXXXX", path);
   int fd = mkstemp(tmp);
@@ -148,4 +189,52 @@ int file_write(const char *path, const char *data) {
 
 int file_write_buffer(const char *path, const buffer *b) {
   return write_atomic(path, NULL, b);
+}
+
+int file_rename(const char *source, const char *destination) {
+#ifdef _WIN32
+  DWORD attributes = GetFileAttributesA(source);
+  if (attributes == INVALID_FILE_ATTRIBUTES) {
+    windows_error();
+    return -1;
+  }
+  if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
+    errno = EISDIR;
+    return -1;
+  }
+#else
+  struct stat info;
+  if (lstat(source, &info) < 0)
+    return -1;
+  if (S_ISDIR(info.st_mode)) {
+    errno = EISDIR;
+    return -1;
+  }
+#endif
+  if (!strcmp(source, destination))
+    return 0;
+#ifdef _WIN32
+  if (MoveFileExA(source, destination, 0))
+    return 0;
+  windows_error();
+  return -1;
+#else
+#if defined(__linux__) && defined(SYS_renameat2)
+  // RENAME_NOREPLACE (1) is atomic and works on filesystems without hard links.
+  if (syscall(SYS_renameat2, AT_FDCWD, source, AT_FDCWD, destination, 1) == 0)
+    return 0;
+  if (errno != ENOSYS && errno != EINVAL && errno != EOPNOTSUPP)
+    return -1;
+#endif
+  // Both names are in the same directory. Exclusive linking prevents a race
+  // from overwriting another file, unlike a stat() check followed by rename().
+  if (link(source, destination) < 0)
+    return -1;
+  if (unlink(source) == 0)
+    return 0;
+  int error = errno;
+  unlink(destination);
+  errno = error;
+  return -1;
+#endif
 }

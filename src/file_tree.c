@@ -132,6 +132,38 @@ void file_tree_free(file_tree *tree) {
   *tree = (file_tree){0};
 }
 
+int file_tree_refresh(file_tree *tree, const char *selection) {
+  if (!tree->count)
+    return 0;
+  file_tree next = {0};
+  if (file_tree_init(&next, tree->entries[0].path) < 0) {
+    snprintf(tree->error, sizeof tree->error, "%s", next.error);
+    file_tree_free(&next);
+    return -1;
+  }
+  // Re-expand only previously visible directories, retaining navigation.
+  for (int i = 1; i < tree->count; i++)
+    if (tree->entries[i].expanded)
+      for (int j = 0; j < next.count; j++)
+        if (!strcmp(tree->entries[i].path, next.entries[j].path)) {
+          next.selected = j;
+          file_tree_expand(&next);
+          break;
+        }
+  if (!selection)
+    selection = tree->entries[tree->selected].path;
+  next.selected = tree->selected < next.count ? tree->selected : next.count - 1;
+  for (int i = 0; i < next.count; i++)
+    if (!strcmp(next.entries[i].path, selection)) {
+      next.selected = i;
+      break;
+    }
+  next.offset = tree->offset;
+  file_tree_free(tree);
+  *tree = next;
+  return 0;
+}
+
 // Only expanded directories occupy rows; scanning never walks the whole project.
 int file_tree_expand(file_tree *tree) {
   const tree_entry *parent = file_tree_selected(tree);

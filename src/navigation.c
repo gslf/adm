@@ -57,6 +57,8 @@ static const char *help_lines[] = {
   "Text-entry prompts keep their own editing keys.",
   "",
   "C-x f      Open File Explorer with focus",
+  "C-x n      Rename selected Explorer file",
+  "C-x d      Delete selected Explorer file (confirmation)",
   "C-x g      Open Git Manager with focus",
   "C-x l      Go to Line",
   "C-s / C-x s  Search current file; C-x S searches workspace",

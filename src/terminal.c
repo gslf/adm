@@ -45,7 +45,10 @@ int init_raw (void){
   DWORD out_mode = orig_out_mode;
 
   // ANSI sequences
-  out_mode |=ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+  out_mode |= ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+  // Every row is positioned explicitly. Writing the bottom-right cell must
+  // not wrap immediately and scroll the entire console on each frame.
+  out_mode &= ~ENABLE_WRAP_AT_EOL_OUTPUT;
 
   if(!SetConsoleMode(hout, out_mode))
     return -1;

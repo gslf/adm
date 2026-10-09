@@ -20,7 +20,7 @@ void screen_empty(abuf *ab, rect area);
 // Width of the line-number column (number plus a space).
 int screen_gutter(const view *v);
 
-// Redraw the whole screen (status bars, text, cursor).
+// Render the whole screen, emitting synchronized output only when it changes.
 void screen_refresh(editor *e);
 
 // Clear the screen (used on exit).

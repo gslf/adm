@@ -4,7 +4,11 @@
 #include "dispatch.h"
 #include "git_panel.h"
 #include "path.h"
+#include "fileio.h"
+#include "lsp.h"
 
+#include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -42,6 +46,121 @@ document *documents_find(const editor *e, const char *path) {
         return w->panes[i].doc;
   }
   return NULL;
+}
+
+document *documents_at_path(const editor *e, const char *path) {
+  errno = 0;
+  for (editor_tab *tab = e->tabs; tab; tab = tab->next) {
+    workspace *w = tabs_workspace(e, tab);
+    for (int i = 0; i < MAX_PANES; i++) {
+      document *doc = w->panes[i].doc;
+      if (!doc || !doc->filename)
+        continue;
+#ifdef _WIN32
+      if (!_stricmp(doc->filename, path))
+#else
+      if (!strcmp(doc->filename, path))
+#endif
+        return doc;
+#ifndef _WIN32
+      // Production filenames are canonical absolute paths. Do not resolve
+      // unrelated files whose parent might have been removed externally.
+      if (doc->filename[0] == '/')
+        continue;
+#endif
+      char *saved_path = path_absolute(doc->filename);
+      if (!saved_path)
+        return NULL;
+      int match = saved_path &&
+#ifdef _WIN32
+          !_stricmp(saved_path, path);
+#else
+          !strcmp(saved_path, path);
+#endif
+      free(saved_path);
+      errno = 0;
+      if (match)
+        return doc;
+    }
+  }
+  return NULL;
+}
+
+int documents_rename_file(editor *e, const char *source, const char *destination) {
+  if (git_panel_worktree_busy(e)) {
+    errno = EBUSY;
+    return -1;
+  }
+  if (!strcmp(source, destination))
+    return file_rename(source, destination);
+  document *doc = documents_at_path(e, source);
+  if (!doc && errno)
+    return -1;
+  document *target = documents_at_path(e, destination);
+  if (!target && errno)
+    return -1;
+  if (target && target != doc) {
+    errno = EEXIST;
+    return -1;
+  }
+  // Allocate before touching disk, so no allocation failure can leave the
+  // shared document saving to its old pathname after a successful rename.
+  char *filename = doc ? copy(destination) : NULL;
+  if (doc && !filename) {
+    errno = ENOMEM;
+    return -1;
+  }
+  if (file_rename(source, destination) < 0) {
+    free(filename);
+    return -1;
+  }
+  if (doc) {
+    lsp_detach(doc);
+    syntax_dispose(doc);
+    if (doc->allocated || doc->owns_filename)
+      free((char *)doc->filename);
+    doc->filename = filename;
+    doc->owns_filename = 1;
+    doc->change_id++;
+  }
+  return 0;
+}
+
+int documents_delete_file(editor *e, const char *path) {
+  if (git_panel_worktree_busy(e)) {
+    errno = EBUSY;
+    return -1;
+  }
+  document *doc = documents_at_path(e, path);
+  if (!doc && errno)
+    return -1;
+  struct stat info;
+#ifdef _WIN32
+  if (stat(path, &info) == 0 && (info.st_mode & _S_IFMT) == _S_IFDIR) {
+#else
+  if (lstat(path, &info) == 0 && S_ISDIR(info.st_mode)) {
+#endif
+    errno = EISDIR;
+    return -1;
+  }
+  if (remove(path) < 0)
+    return -1;
+  if (doc) {
+    // The explorer has already confirmed discarding any unsaved content.
+    // Empty every referencing split, so Save cannot recreate the deleted file.
+    document_retain(doc);
+    for (editor_tab *tab = e->tabs; tab; tab = tab->next) {
+      workspace *w = tabs_workspace(e, tab);
+      for (int i = 0; i < MAX_PANES; i++)
+        if (w->panes[i].doc == doc) {
+          view_bind_document(&w->panes[i], NULL);
+          w->panes[i].revision = ++e->next_view_revision;
+        }
+    }
+    document_release(doc);
+    layout_arrange(e);
+  }
+  return 0;
 }
 
 static view *request_view(editor *e) {

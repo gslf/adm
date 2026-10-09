@@ -4,6 +4,7 @@
 #include "screen.h"
 #include "path.h"
 #include "utf8.h"
+#include "fileio.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -12,6 +13,7 @@
 
 void new_file_shutdown(editor *e) {
   free(e->new_file.directory);
+  free(e->new_file.rename_path);
   e->new_file = (new_file_prompt){0};
 }
 
@@ -48,6 +50,62 @@ static void begin(editor *e) {
   p->pane = e->windows.active;
   p->revision = e->view->revision;
   e->sidebar.focused = 0;
+}
+
+void new_file_rename(editor *e, const char *path) {
+  if (e->confirmation || e->new_file.active || git_panel_worktree_busy(e)) {
+    snprintf(e->files.tree.error, sizeof e->files.tree.error, "Wait for the current operation");
+    return;
+  }
+  const char *name = path_name(path);
+  if (strlen(name) >= sizeof e->new_file.name) {
+    snprintf(e->files.tree.error, sizeof e->files.tree.error, "File name too long");
+    return;
+  }
+  new_file_shutdown(e);
+  new_file_prompt *p = &e->new_file;
+  size_t parent = (size_t)(name - path);
+  p->directory = malloc(parent + 1);
+  p->rename_path = malloc(strlen(path) + 1);
+  if (!p->directory || !p->rename_path) {
+    new_file_shutdown(e);
+    snprintf(e->files.tree.error, sizeof e->files.tree.error, "Out of memory");
+    return;
+  }
+  memcpy(p->directory, path, parent);
+  p->directory[parent] = 0;
+  strcpy(p->rename_path, path);
+  strcpy(p->name, name);
+  p->length = p->cursor = (int)strlen(name);
+  p->active = 1;
+}
+
+static void rename_file(editor *e) {
+  new_file_prompt *p = &e->new_file;
+  if (!p->length || !strcmp(p->name, ".") || !strcmp(p->name, "..") ||
+      strchr(p->name, '/')
+#ifdef _WIN32
+      || strpbrk(p->name, "\\:<>\"|?*") ||
+      p->name[p->length - 1] == '.' || p->name[p->length - 1] == ' '
+#endif
+      ) {
+    snprintf(p->error, sizeof p->error, "Enter a simple file name");
+    return;
+  }
+  char *target = path_join(p->directory, p->name);
+  if (!target) {
+    snprintf(p->error, sizeof p->error, "Out of memory");
+    return;
+  }
+  if (documents_rename_file(e, p->rename_path, target) < 0) {
+    snprintf(p->error, sizeof p->error, "Cannot rename file: %s", strerror(errno));
+    free(target);
+    return;
+  }
+  new_file_shutdown(e);
+  file_manager_refresh_select(e, target);
+  free(target);
+  e->sidebar.focused = file_manager_area(e).width > 0;
 }
 
 void new_file_bindings(void) {
@@ -95,7 +153,7 @@ static void create(editor *e) {
     return;
   }
   // Exclusive creation protects existing files, including symlink targets.
-  FILE *fp = fopen(path, "wbx");
+  FILE *fp = file_create(path);
   if (!fp) {
     if (errno == EEXIST)
       snprintf(p->error, sizeof p->error, "File already exists; select it in Explorer");
@@ -128,9 +186,12 @@ int new_file_key(editor *e, int key) {
   if (key == CTRL('g') || key == '\x1b') {
     new_file_shutdown(e);
     sidebar_show(e, SIDEBAR_FILES);
-  } else if (key == '\r' || key == '\n')
-    create(e);
-  else if (key == KEY_LEFT || key == CTRL('b'))
+  } else if (key == '\r' || key == '\n') {
+    if (p->rename_path)
+      rename_file(e);
+    else
+      create(e);
+  } else if (key == KEY_LEFT || key == CTRL('b'))
     p->cursor = grapheme_prev(p->name, p->cursor);
   else if (key == KEY_RIGHT || key == CTRL('f')) {
     if (p->cursor < p->length)
@@ -165,7 +226,9 @@ int new_file_key(editor *e, int key) {
 
 // Keep the insertion point visible; all writes remain inside the terminal.
 static int badge_width(const editor *e) {
-  return e->cols >= 16 ? 10 : e->cols >= 8 ? 3 : 0;
+  if (e->cols >= 16)
+    return e->new_file.rename_path ? 8 : 10;
+  return e->cols >= 8 ? 3 : 0;
 }
 
 static int offset(const editor *e, int *column) {
@@ -187,8 +250,9 @@ void new_file_draw(const editor *e, abuf *ab) {
     return;
   screen_position(ab, 0, e->rows - 1);
   theme_append(ab, THEME_STATUS);
-  int used = screen_text(ab, badge_width(e) == 10 ? " NEW FILE " :
-                        badge_width(e) == 3 ? "N: " : "", e->cols), col;
+  const char *badge = e->new_file.rename_path ? " RENAME " : " NEW FILE ";
+  int used = screen_text(ab, badge_width(e) >= 8 ? badge :
+                        badge_width(e) == 3 ? e->new_file.rename_path ? "R: " : "N: " : "", e->cols), col;
   int start = offset(e, &col);
   used += screen_text(ab, e->new_file.name + start, e->cols - used);
   screen_repeat(ab, ' ', e->cols - used);

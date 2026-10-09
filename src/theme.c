@@ -18,8 +18,13 @@ static const char *defaults[THEME_COUNT] = {
     "\x1b[m",
     "\x1b[30;103m",
     "\x1b[97;41m",
+#ifdef _WIN32
+    "\x1b[0;30;43m",
+    "\x1b[0;30;43m",
+#else
     "\x1b[44;97m",
     "\x1b[97;44m",
+#endif
     "\x1b[30;47m",
     "\x1b[90m",
     "\x1b[36m",

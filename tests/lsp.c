@@ -10,6 +10,8 @@
 #include <string.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <io.h>
+#include <fcntl.h>
 static void pause_tick(void) { Sleep(1); }
 #else
 #include <unistd.h>
@@ -291,8 +293,13 @@ static int logged(const char *log, const char *method) {
   return count;
 }
 int main(int argc, char **argv) {
-  if (getenv("ADM_LSP_FAKE_CHILD"))
+  if (getenv("ADM_LSP_FAKE_CHILD")) {
+#ifdef _WIN32
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     return server();
+  }
   assert(argc == 2);
   char *filename = malloc(strlen(argv[1]) + 20),
        *log = malloc(strlen(argv[1]) + 8);
@@ -418,6 +425,26 @@ int main(int argc, char **argv) {
   menu(&e, 's');
   ready(&e);
   assert(logged(log, "textDocument/didOpen") == 4);
+  // A filesystem rename retains the shared buffer and history, but closes the
+  // old LSP URI and opens the new one with current, potentially unsaved text.
+  char *renamed = malloc(strlen(filename) + 16);
+  assert(renamed);
+  sprintf(renamed, "%s.renamed.c", filename);
+  char *source_path = path_absolute(e.document.filename);
+  char *renamed_path = path_absolute(renamed);
+  assert(source_path && renamed_path);
+  void *history_before = e.document.history;
+  int views_before = e.document.views, dirty_before = e.document.dirty;
+  int closes_before = logged(log, "textDocument/didClose");
+  assert(!documents_rename_file(&e, source_path, renamed_path));
+  assert(!e.document.lsp && e.document.history == history_before &&
+         e.document.views == views_before && e.document.dirty == dirty_before);
+  settle(&e);
+  assert(e.document.lsp && logged(log, "textDocument/didOpen") == 5 &&
+         logged(log, "textDocument/didClose") == closes_before + 1);
+  free(source_path);
+  free(renamed_path);
+  free(renamed);
   // Oversized buffers never enqueue enormous didChange notifications.
   char *huge = malloc(1024u * 1024u + 2);
   assert(huge);

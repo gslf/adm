@@ -8,8 +8,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import argparse
 
 root = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--suite", action="append", help="Run only this C regression suite (repeatable)")
+arguments = parser.parse_args()
 
 help_source = (root / "src" / "navigation.c").read_text().split(
     "static const char *help_lines[] = {", 1)[1].split("};", 1)[0]
@@ -93,9 +97,19 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
         flags.append("-pthread")
     link_flags = shlex.split(os.environ.get("LDLIBS", "-ldl" if sys.platform.startswith("linux") else ""))
     os.environ["ADM_CONFIG"] = str(Path(directory) / "no-user-config")
-    for suite in ("config", "plugins", "languages", "lsp", "lsp_edits", "pattern", "search", "undo", "controls", "navigation", "splits", "tabs", "empty_views", "large_files", "lifecycle", "file_manager", "process", "diff", "git", "git_initial"):
+    suites = ("config", "plugins", "languages", "lsp", "lsp_edits", "pattern", "search", "undo", "controls", "navigation", "splits", "tabs", "empty_views", "large_files", "lifecycle", "file_manager", "file_operations", "screen", "process", "diff", "git", "git_initial")
+    if os.name == "nt":
+        suites += ("terminal_mode",)
+    if arguments.suite:
+        unknown = set(arguments.suite) - set(suites)
+        if unknown:
+            parser.error("Unknown suites: " + ", ".join(sorted(unknown)))
+        suites = tuple(suite for suite in suites if suite in arguments.suite)
+    for suite in suites:
         binary = Path(directory) / suite
-        subprocess.run(compiler + flags + (["-DADM_TEST_ALLOC"] if suite in ("undo", "lsp_edits", "plugins") else []) + ["-I", str(root / "src"), "-o", str(binary),
+        # Keep project headers out of <...> searches: src/process.h otherwise
+        # shadows the Windows CRT header declaring _beginthreadex.
+        subprocess.run(compiler + flags + (["-DADM_TEST_ALLOC"] if suite in ("undo", "lsp_edits", "plugins") else []) + ["-iquote", str(root / "src"), "-o", str(binary),
                                          str(root / "tests" / f"{suite}.c")]
                        + [str(p) for p in sources] + link_flags, check=True)
         environment = dict(os.environ, PATH="")
@@ -159,30 +173,31 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
             (working_directory / "folder").mkdir()
             (working_directory / "existing.txt").write_text("keep\n")
             argument = working_directory / "absolute.txt"
-        if suite == "file_manager":
-            working_directory = Path(directory) / "files"
+        if suite in ("file_manager", "file_operations"):
+            working_directory = Path(directory) / (suite + " files")
             working_directory.mkdir()
             (working_directory / "empty").mkdir()
             (working_directory / "folder").mkdir()
             (working_directory / "folder" / "nested.txt").write_text("nested\n")
             for name in ("alpha", "beta", "gamma", "gone"):
-                (working_directory / f"{name}.txt").write_text(f"{name}\n")
+                (working_directory / f"{name}.txt").write_bytes(f"{name}\n".encode())
             (working_directory / "nul.bin").write_bytes(b"before\0after")
             (working_directory / ".hidden").write_text("hidden\n")
             if os.name == "posix":
                 (working_directory / "beta.link").symlink_to("beta.txt")
                 os.mkfifo(working_directory / "pipe")
             argument = working_directory / "alpha.txt"
-        subprocess.run([str(binary), str(argument)], env=environment,
-                       cwd=working_directory, stdout=subprocess.PIPE, check=True)
+        subprocess.run([str(binary), argument.as_posix()], env=environment,
+                       cwd=working_directory, stdout=subprocess.PIPE, check=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW if suite == "terminal_mode" else 0)
         if suite == "git":
             assert git(working_directory, "branch", "--show-current").strip() == b"panel-branch"
             assert git(remote, "show", "feature:alpha.txt") == b"resolved\n"
             assert b"Add tests $(touch should-not-exist) 'quotes'" in git(
                 working_directory, "log", "--all", "--format=%s")
         print(f"{suite.capitalize()} regressions passed.")
-    if os.name == "posix":
-        from terminal import run, run_empty, run_file_manager, run_git, run_search, run_undo, run_lsp
+    if os.name == "posix" and not arguments.suite:
+        from terminal import run, run_empty, run_file_manager, run_file_operations, run_git, run_search, run_undo, run_lsp
         binary = Path(directory) / "adm"
         subprocess.run(compiler + flags + ["-o", str(binary), str(root / "src" / "main.c")]
                        + [str(p) for p in sources] + link_flags, check=True)
@@ -197,4 +212,5 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
         run_search(binary)
         run_empty(binary)
         run_file_manager(binary)
+        run_file_operations(binary)
         run_git(binary, git_fixture)

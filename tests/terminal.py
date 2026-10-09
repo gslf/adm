@@ -127,10 +127,10 @@ def run(binary):
             return "\n".join(terminal.lines())
 
         def resize(rows, cols):
+            read_frame(master)  # Drain output at the old size before resizing.
+            terminal.resize(rows, cols)
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
             process.send_signal(signal.SIGWINCH)
-            read_frame(master)
-            terminal.resize(rows, cols)
             return update()
 
         try:
@@ -233,11 +233,10 @@ def run_empty(binary):
             return "\n".join(terminal.lines())
 
         def resize(rows, cols):
+            read_frame(master)  # Drain output at the old size before resizing.
+            terminal.resize(rows, cols)
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
             process.send_signal(signal.SIGWINCH)
-            # Discard frames already in flight at the previous terminal size.
-            read_frame(master)
-            terminal.resize(rows, cols)
             return update()
 
         try:
@@ -293,6 +292,76 @@ def run_empty(binary):
     print("Empty-view terminal regressions passed.")
 
 
+def run_file_operations(binary):
+    with tempfile.TemporaryDirectory(prefix="adm-file-operations-terminal-") as directory:
+        root = Path(directory)
+        original = root / "alpha.c"
+        original.write_text("int value = 42;\n")
+        (root / "zeta.txt").write_text("keep\n")
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
+        process = subprocess.Popen([str(binary), original.name], cwd=root,
+                                   stdin=slave, stdout=slave, stderr=slave,
+                                   env=dict(os.environ, ADM_CONFIG=str(root / "no-config")))
+        os.close(slave)
+        terminal = Terminal(24, 100)
+
+        def update(keys=b""):
+            if keys:
+                os.write(master, keys)
+            terminal.feed(read_frame(master))
+            return "\n".join(terminal.lines())
+
+        def resize(rows, cols):
+            read_frame(master)
+            terminal.resize(rows, cols)
+            fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+            process.send_signal(signal.SIGWINCH)
+            return update()
+
+        try:
+            update()
+            update(b"!\x18f\x1b[B")
+            text = update(b"rd\x1b[3~")
+            assert " RENAME " not in text and "Delete '" not in text and original.exists()
+            menu = update(b"\x18")
+            for _ in range(3):
+                menu += update(b"\x1b[6~")
+            assert "Rename selected file" in menu and "Delete selected file" in menu
+            update(b"\x1b")
+            prompt = update(b"\x18n")
+            assert " RENAME alpha.c" in prompt and terminal.cursor_visible
+            # Unix must keep its original blue active palette and yellow status.
+            assert terminal.backgrounds[1][0] == 44 and terminal.foregrounds[1][0] == 97
+            assert terminal.backgrounds[0][0] == 103
+            assert "R: " in resize(5, 9) and terminal.col < 9
+            assert " RENAME " in resize(24, 100)
+            renamed = root / "renamed è.py"
+            text = update(b"\x1b[H" + b"\x1b[3~" * 20 + renamed.name.encode() + b"\r")
+            assert renamed.name in text and "!int value = 42;" in text
+            assert not original.exists() and renamed.read_text() == "int value = 42;\n"
+            update(b"\x0c\x18\x13")
+            assert renamed.read_text() == "!int value = 42;\n" and not original.exists()
+            prompt = update(b"\x18f\x18n\x1b[H" + b"\x1b[3~" * 20 + b"zeta.txt\r")
+            assert "Cannot rename" in prompt and " RENAME " in prompt
+            assert (root / "zeta.txt").read_text() == "keep\n"
+            update(b"\x1b")
+            assert "Delete" in update(b"\x18d")
+            update(b"n")
+            assert renamed.exists()
+            empty = update(b"\x18dy")
+            assert not renamed.exists() and "[Empty]" in empty
+            assert (root / "zeta.txt").read_text() == "keep\n"
+            update(b"\x18\x03")
+            assert process.wait(timeout=3) == 0
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+    print("File-operation terminal regressions passed.")
+
+
 def run_file_manager(binary):
     with tempfile.TemporaryDirectory(prefix="adm-tree-terminal-") as directory:
         root = Path(directory)
@@ -317,10 +386,10 @@ def run_file_manager(binary):
             return "\n".join(terminal.lines())
 
         def resize(rows, cols):
+            read_frame(master)  # Drain output at the old size before resizing.
+            terminal.resize(rows, cols)
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
             process.send_signal(signal.SIGWINCH)
-            read_frame(master)
-            terminal.resize(rows, cols)
             return update()
 
         try:
@@ -420,10 +489,10 @@ def run_git(binary, create_repository):
             raise AssertionError("Git UI did not settle:\n" + text)
 
         def resize(rows, cols):
+            read_frame(master)  # Drain output at the old size before resizing.
+            terminal.resize(rows, cols)
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
             process.send_signal(signal.SIGWINCH)
-            read_frame(master)
-            terminal.resize(rows, cols)
             return update()
 
         try:
@@ -549,10 +618,10 @@ def run_search(binary):
             return text
 
         def resize(rows, cols):
+            read_frame(master)  # Drain output at the old size before resizing.
+            terminal.resize(rows, cols)
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
             process.send_signal(signal.SIGWINCH)
-            read_frame(master)
-            terminal.resize(rows, cols)
             return update()
 
         try:
@@ -714,10 +783,10 @@ def run_lsp(binary):
             update(b"\x1b")
             assert "int value = 42" in update()
             for rows, cols in ((7, 24), (3, 8), (2, 3)):
-                fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-                process.send_signal(signal.SIGWINCH)
                 read_frame(master)
                 terminal.resize(rows, cols)
+                fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+                process.send_signal(signal.SIGWINCH)
                 update()
                 update(b"\x1bx")
                 update(b"\x1b[B\x1b[B\x1b")

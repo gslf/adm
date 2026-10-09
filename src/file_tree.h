@@ -13,6 +13,7 @@ typedef struct file_tree {
 } file_tree;
 
 int file_tree_init(file_tree *tree, const char *root);
+int file_tree_refresh(file_tree *tree, const char *selection);
 void file_tree_free(file_tree *tree);
 int file_tree_expand(file_tree *tree);
 void file_tree_collapse(file_tree *tree);

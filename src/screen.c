@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #ifdef _WIN32
 #include <io.h>
@@ -23,6 +24,23 @@
 #define SELECT_ON theme_colour(THEME_SELECTION)
 #define STATUS_COLOURS theme_colour(THEME_STATUS)
 #define WARNING_COLOURS theme_colour(THEME_WARNING)
+
+// The cache belongs to the single terminal UI, like the active theme.
+static abuf previous_frame;
+static int previous_rows, previous_cols;
+
+static int write_output(const char *text, int length) {
+  while (length > 0) {
+    int written = (int)WRITE(1, text, length);
+    if (written < 0 && errno == EINTR)
+      continue;
+    if (written <= 0)
+      return -1;
+    text += written;
+    length -= written;
+  }
+  return 0;
+}
 
 void ab_append(abuf *ab, const char *s, int len) {
   if (len <= 0)
@@ -313,7 +331,7 @@ static void draw_file_manager(editor *e, abuf *ab) {
   }
   screen_position(ab, area.x, area.y + area.height - 1);
   append_str(ab, tree->error[0] ? WARNING_COLOURS : theme_colour(THEME_MUTED));
-  screen_text(ab, tree->error[0] ? tree->error : "Enter: open  C-l: editor", area.width);
+  screen_text(ab, tree->error[0] ? tree->error : "Enter: open  C-x: commands", area.width);
   append_str(ab, theme_colour(THEME_MUTED));
   screen_fill(ab, (rect){area.width, area.y, 1, area.height}, '|');
   append_str(ab, theme_colour(THEME_NORMAL));
@@ -375,7 +393,9 @@ static void draw_bottom(editor *e, abuf *ab) {
 void screen_refresh(editor *e) {
   layout_arrange(e);
   abuf ab = {0};
-  append_str(&ab, "\x1b[?25l");
+  // Unsupported private modes are ignored by older terminals. Supporting
+  // terminals present the completed frame instead of the blank workspace.
+  append_str(&ab, "\x1b[?2026h\x1b[?25l");
   draw_top(e, &ab);
   draw_workspace(e, &ab);
   draw_file_manager(e, &ab);
@@ -401,11 +421,29 @@ void screen_refresh(editor *e) {
     screen_position(&ab, x, y);
     append_str(&ab, "\x1b[?25h");
   }
-  WRITE(1, ab.b, ab.len);
-  ab_free(&ab);
+  append_str(&ab, "\x1b[?2026l");
+  if (previous_rows == e->rows && previous_cols == e->cols &&
+      previous_frame.len == ab.len && previous_frame.b &&
+      !memcmp(previous_frame.b, ab.b, ab.len)) {
+    ab_free(&ab);
+    return;
+  }
+  ab_free(&previous_frame);
+  if (write_output(ab.b, ab.len) == 0) {
+    previous_frame = ab;
+    previous_rows = e->rows;
+    previous_cols = e->cols;
+  } else {
+    // Do not leave synchronized output enabled after an incomplete write.
+    static const char end[] = "\x1b[?2026l\x1b[?25h";
+    write_output(end, sizeof end - 1);
+    ab_free(&ab);
+  }
 }
 
 void screen_clear(void) {
-  static const char cleanup[] = "\x1b[m\x1b[2J\x1b[H\x1b[?25h";
-  WRITE(1, cleanup, sizeof cleanup - 1);
+  ab_free(&previous_frame);
+  previous_rows = previous_cols = 0;
+  static const char cleanup[] = "\x1b[?2026l\x1b[m\x1b[2J\x1b[H\x1b[?25h";
+  write_output(cleanup, sizeof cleanup - 1);
 }
