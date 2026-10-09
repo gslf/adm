@@ -9,6 +9,7 @@ import select
 import signal
 import struct
 import subprocess
+import sys
 import tempfile
 import termios
 import time
@@ -98,12 +99,60 @@ def read_frame(fd):
     while time.monotonic() < deadline:
         if select.select([fd], [], [], max(0, deadline - time.monotonic()))[0]:
             try:
-                chunks.append(os.read(fd, 65536))
+                data = os.read(fd, 65536)
             except OSError as error:
                 if error.errno != errno.EIO:
                     raise
                 break
+            if not data:
+                break
+            chunks.append(data)
     return b"".join(chunks)
+
+
+def wait_exit(process, fd, timeout=3):
+    # TCSAFLUSH on macOS waits for output to drain. Keep reading the PTY
+    # while waiting for exit, including the final screen cleanup sequence.
+    chunks = []
+    deadline = time.monotonic() + timeout
+    while process.poll() is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(process.args, timeout, output=b"".join(chunks))
+        if not select.select([fd], [], [], min(remaining, 0.05))[0]:
+            continue
+        try:
+            data = os.read(fd, 65536)
+        except OSError as error:
+            if error.errno != errno.EIO:
+                raise
+            data = b""
+        if not data:
+            process.wait(timeout=max(0, deadline - time.monotonic()))
+            break
+        chunks.append(data)
+    chunks.append(read_frame(fd))
+    output = b"".join(chunks)
+    assert process.returncode == 0, (process.args, process.returncode, output)
+    return output
+
+
+def run_exit_drain():
+    master, slave = pty.openpty()
+    # Exceed the PTY buffer so waiting without reading must block, even on Linux.
+    payload = b"x" * 262144 + b"\x1b[?25h"
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x' * 262144 + b'\\x1b[?25h')"],
+        stdout=slave, stderr=slave)
+    os.close(slave)
+    try:
+        assert wait_exit(process, master) == payload
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        os.close(master)
+    print("Terminal exit-drain regression passed.")
 
 
 def run(binary):
@@ -205,7 +254,8 @@ def run(binary):
             assert filename.read_text() == "ZQ" + original
             update(b"\x18\x03")
             os.write(master, b"y")
-            assert process.wait(timeout=3) == 0 and alias.is_symlink()
+            wait_exit(process, master)
+            assert alias.is_symlink()
         finally:
             if process.poll() is None:
                 process.kill()
@@ -283,7 +333,7 @@ def run_empty(binary):
             update(b"\x07\x18k")
             closed = update(b"\x18\x03")
             assert "Quit without saving" not in closed
-            assert process.wait(timeout=3) == 0
+            wait_exit(process, master)
         finally:
             if process.poll() is None:
                 process.kill()
@@ -353,7 +403,7 @@ def run_file_operations(binary):
             assert not renamed.exists() and "[Empty]" in empty
             assert (root / "zeta.txt").read_text() == "keep\n"
             update(b"\x18\x03")
-            assert process.wait(timeout=3) == 0
+            wait_exit(process, master)
         finally:
             if process.poll() is None:
                 process.kill()
@@ -449,7 +499,7 @@ def run_file_manager(binary):
             assert "Aalpha text" in cancelled and "Ninside folder" in cancelled
             update(b"\x18\x03")
             os.write(master, b"y")
-            assert process.wait(timeout=3) == 0
+            wait_exit(process, master)
             assert (root / "alpha.txt").read_text() == "alpha text\n"
             assert (root / "beta.txt").read_text() == "beta text\n"
             assert (root / "folder" / "nested.txt").read_text() == "inside folder\n"
@@ -575,7 +625,7 @@ def run_git(binary, create_repository):
             restored = resize(28, 120)
             assert " GIT" in restored and "s/u stage/unstage" in restored
             update(b"\x18\x03")
-            assert process.wait(timeout=3) == 0
+            wait_exit(process, master)
         finally:
             if process.poll() is None:
                 process.kill()
@@ -674,7 +724,7 @@ def run_search(binary):
             ready("Replacement finished")
             assert (root / "doc.txt").read_text() == "è word word\na.c abc\n"
             update(b"\x18\x03")
-            assert process.wait(timeout=3) == 0
+            wait_exit(process, master)
         finally:
             if process.poll() is None:
                 process.kill()
@@ -731,7 +781,7 @@ def run_modal(binary):
             assert "Quit without saving?" not in update(b"\x1b")
             assert process.poll() is None
             update(b"\x13needle\x18\x03y")
-            assert process.wait(timeout=3) == 0
+            wait_exit(process, master)
             assert filename.read_text() == original
         finally:
             if process.poll() is None:
@@ -781,7 +831,7 @@ def run_undo(binary):
             assert restored.count("abc base") == 2
             assert update(b"\x1bz").count("abc defbase") == 2
             update(b"\x18\x03")
-            assert process.wait(timeout=3) == 0
+            wait_exit(process, master)
         finally:
             if process.poll() is None:
                 process.kill()
@@ -853,7 +903,7 @@ def run_lsp(binary):
                 assert terminal.cursor_visible
                 update(b"\x1b")
             update(b"\x18\x03")
-            assert process.wait(timeout=3) == 0
+            wait_exit(process, master)
             assert filename.read_text() == original
         finally:
             if process.poll() is None:

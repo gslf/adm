@@ -1,5 +1,5 @@
 """Exercise a configured theme and a real C plugin through the terminal loop."""
-from terminal import Terminal, read_frame
+from terminal import Terminal, read_frame, wait_exit
 import fcntl
 import os
 from pathlib import Path
@@ -66,9 +66,7 @@ def run(binary, themes, library):
             assert "USER Up/Dn Enter/key Esc" in terminal.lines()[-1]
             update(b"\x1b")
             update(b"\x18\x03")
-            process.wait(timeout=3)
-            assert process.returncode == 0
-            terminal.feed(read_frame(master))
+            terminal.feed(wait_exit(process, master))
             assert terminal.background is None and terminal.foreground is None
             assert terminal.cursor_visible
         finally:
