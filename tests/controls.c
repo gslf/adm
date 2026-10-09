@@ -8,7 +8,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
 
 static void test_reader(void) {
@@ -133,7 +135,9 @@ int main(int argc, char **argv) {
   unsigned long long matches; int done = 0;
   for (int attempt = 0; attempt < 10000 && !done; attempt++) {
     search_status(&e, &matches, &done);
-#ifndef _WIN32
+#ifdef _WIN32
+    Sleep(1);
+#else
     usleep(1000);
 #endif
   }
@@ -224,7 +228,7 @@ int main(int argc, char **argv) {
   dispatch_key(&e, 'p');
   assert(!e.prefix_active && e.view->cy == 1);
 
-  const int cancel_keys[] = {'n', 'x', 'Y', CTRL('x'), KEY_DELETE, CTRL(' '), KEY_UNKNOWN};
+  const int cancel_keys[] = {'n', 'x', 'Y', KEY_DELETE, CTRL(' '), KEY_UNKNOWN};
   int cy = e.view->cy, cx = e.view->cx;
   for (size_t i = 0; i < sizeof cancel_keys / sizeof cancel_keys[0]; i++) {
     prefix(&e, CTRL('c'));
@@ -238,7 +242,10 @@ int main(int argc, char **argv) {
   }
   prefix(&e, CTRL('c'));
   dispatch_key(&e, CTRL('x'));
+  assert(!e.confirmation && e.prefix_active);
   dispatch_key(&e, CTRL('c'));
+  assert(e.confirmation && !e.prefix_active);
+  dispatch_key(&e, '\x1b');
   assert(e.running && !e.confirmation && !e.prefix_active);
   prefix(&e, CTRL('c'));
   dispatch_key(&e, 'y');

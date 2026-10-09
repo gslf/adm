@@ -352,6 +352,24 @@ int main(int argc, char **argv) {
   dispatch_key(&e, '\x1b');
   menu(&e, 'c');
   popup(&e);
+  dispatch_key(&e, CTRL('x'));
+  assert(e.prefix_active && !lsp_modal(&e));
+  dispatch_key(&e, '\x1b');
+  assert(!strcmp(buffer_line(&e.document.buf, 0), "pri"));
+  menu(&e, 'c');
+  popup(&e);
+  dispatch_key(&e, META('x'));
+  assert(lsp_modal(&e) && !e.prefix_active);
+  dispatch_key(&e, '\x1b');
+  assert(!strcmp(buffer_line(&e.document.buf, 0), "pri"));
+  // A cancelled response cannot reopen a popup over the Command Center.
+  menu(&e, 'h');
+  dispatch_key(&e, CTRL('x'));
+  settle(&e);
+  assert(e.prefix_active && !lsp_modal(&e));
+  dispatch_key(&e, '\x1b');
+  menu(&e, 'c');
+  popup(&e);
   dispatch_key(&e, '\r');
   assert(!lsp_modal(&e));
   assert(!strcmp(buffer_line(&e.document.buf, 0), "print"));

@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
 #include <windows.h>
 static void pause_tick(void) { Sleep(1); }
 #else
@@ -22,6 +24,11 @@ static void settle(child_process *process) {
 }
 
 int main(int argc, char **argv) {
+#ifdef _WIN32
+  _setmode(_fileno(stdin), _O_BINARY);
+  _setmode(_fileno(stdout), _O_BINARY);
+  _setmode(_fileno(stderr), _O_BINARY);
+#endif
   if (argc > 1 && !strcmp(argv[1], "--child")) {
     assert(argc == 4 && getchar() == EOF);
     assert(!strcmp(getenv("ADM_PROCESS_TEST"), "child only"));

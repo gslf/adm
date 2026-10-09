@@ -241,6 +241,9 @@ int main(int argc, char **argv) {
   dispatch_key(&e, '!');
   focus(&e);
   dispatch_key(&e, 'b');
+  if (e.git.mode != GIT_FILES || !e.git.failed || e.git.action != GIT_IDLE)
+    fprintf(stderr, "Dirty checkout: document=%s dirty=%d root=%s message=%s\n",
+            alpha->filename, alpha->dirty, e.git.repo.root, e.git.message);
   assert(e.git.mode == GIT_FILES && e.git.failed && e.git.action == GIT_IDLE);
   prefix(&e, CTRL('s'));
   settle(&e);

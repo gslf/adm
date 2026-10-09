@@ -65,9 +65,13 @@ int main(int argc, char **argv) {
   dispatch_key(&e, 'h'); assert(e.sidebar.focused);
   dispatch_key(&e, 'j'); assert(e.sidebar.focused);
   dispatch_key(&e, 'l'); assert(!e.sidebar.focused); at(&e, 3);
-  const int ignored[] = {'X', '\r', CTRL('d'), CTRL('x'), '2', '?'};
+  const int ignored[] = {'X', '\r', CTRL('d'), '2', '?'};
   for (unsigned i = 0; i < sizeof ignored / sizeof *ignored; i++) dispatch_key(&e, ignored[i]);
   assert(!strcmp(buffer_line(&e.document.buf, 0), "abc") && !e.document.dirty);
+  dispatch_key(&e, CTRL('x'));
+  assert(e.prefix_active && !e.move_active);
+  dispatch_key(&e, '\x1b');
+  prefix(&e, 'm');
   e.cols = 1; e.rows = 1; layout_arrange(&e); assert(e.windows.compact);
   dispatch_key(&e, 'l'); at(&e, 2);
   dispatch_key(&e, 'k'); at(&e, 1);
@@ -136,7 +140,7 @@ int main(int argc, char **argv) {
   dispatch_key(&e, '\x1b');
   prefix(&e, '?'); assert(e.help_active);
   abuf ab = {0}; dispatch_draw(&e, &ab); ab_append(&ab, "\0", 1);
-  assert(strstr(ab.b, "ESC returns to editing") && strstr(ab.b, "C-x k")); ab_free(&ab);
+  assert(strstr(ab.b, "ESC returns to editing") && strstr(ab.b, "Open menus anywhere")); ab_free(&ab);
   dispatch_key(&e, CTRL('n')); assert(e.active_tab->id == second && e.help_active);
   e.rows = 3; e.cols = 1; dispatch_key(&e, KEY_END);
   assert(e.help_scroll > 0); dispatch_draw(&e, &ab); ab_free(&ab);

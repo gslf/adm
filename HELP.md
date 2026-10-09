@@ -19,6 +19,9 @@ C-h C-j C-k C-l C-b C-n C-p
 Arrows move the text cursor or sidebar selection normally.
 Backspace deletes; Enter inserts a newline (C-j moves down).
 Text-entry prompts keep their own editing keys.
+Esc        Cancel current mode, menu or confirmation
+C-x / M-x  Open menus anywhere; cancel the current prompt
+C-x C-c    Quit from any mode (confirms unsaved edits)
 
 C-x f      Open File Explorer with focus
 C-x n      Rename selected Explorer file
@@ -62,6 +65,15 @@ Up/Down or PgUp/PgDown scroll; ESC closes this help
 ## Controls
 
 `C-` means Ctrl; `M-` means Alt, or Esc followed by the key.
+
+`Esc` cancels the current mode, menu or confirmation. `C-x` opens the Command
+Center and `M-x` opens the LSP menu from every screen, including search,
+replacement, filename and Git prompts, help, MOVE and User Center. Opening
+either menu cancels the current prompt without discarding edits already in
+buffers or accepting a pending confirmation. `C-x C-c` quits from every mode;
+unsaved edits and running Git operations still require confirmation.
+Cancelling a workspace replacement stops further writes and reloads clean
+buffers for files already changed.
 
 | Key | Action |
 |-----|--------|

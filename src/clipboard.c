@@ -221,6 +221,7 @@ static void terminal_clipboard_copy(const char *text) {
 // PLATFORM: POSIX
 #else
 
+#include <errno.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -401,8 +402,17 @@ static void terminal_clipboard_copy(const char *text) {
 
   // Straight to the terminal, not through printf: this is a control sequence
   // meant for the terminal itself and it must not sit in a stdio buffer.
-  if (!sequence.failed)
-    write(STDOUT_FILENO, sequence.data, sequence.length);
+  if (!sequence.failed) {
+    size_t offset = 0;
+    while (offset < sequence.length) {
+      ssize_t written = write(STDOUT_FILENO, sequence.data + offset, sequence.length - offset);
+      if (written < 0 && errno == EINTR)
+        continue;
+      if (written <= 0)
+        break;
+      offset += (size_t)written;
+    }
+  }
 
   builder_free(&sequence);
 }

@@ -242,7 +242,7 @@ static FILE *replacement_file(const char *path, char **temporary,
   (void)source;
   snprintf(*temporary, strlen(path) + 24, "%s.adm-search-%lu", path,
            (unsigned long)GetCurrentThreadId());
-  return fopen(*temporary, "wbx");
+  return file_create(*temporary);
 #else
   snprintf(*temporary, strlen(path) + 24, "%s.adm-search-XXXXXX", path);
   int fd = mkstemp(*temporary);
@@ -432,7 +432,13 @@ static void scan_file(search_job *j, const char *path,
       ok = 0;
     if (ok && changed && !cancelled(j)) {
 #ifdef _WIN32
-      if (stat(path, &after) < 0 || !same_file(&original, &after) ||
+      // Compare handle metadata consistently: some CRTs give stat/fstat
+      // different st_dev values for the same file.
+      FILE *current = regular_file(path, &after);
+      int unchanged = current && same_file(&original, &after);
+      if (current)
+        fclose(current);
+      if (!unchanged ||
           !MoveFileExA(temporary, path, MOVEFILE_REPLACE_EXISTING))
         ok = 0;
 #else

@@ -10,7 +10,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
 #endif
 
@@ -102,6 +104,24 @@ int main(int argc, char **argv) {
   document *doc = e.view->doc;
   dispatch_key(&e, '!');
   assert(doc->dirty && !strcmp(buffer_line(&doc->buf, 0), "!alpha"));
+#ifdef _WIN32
+  // Git and the explorer may receive long and 8.3 spellings of the same path.
+  char short_file[MAX_PATH], short_root[MAX_PATH];
+  assert(GetShortPathNameA(argv[1], short_file, sizeof short_file));
+  assert(GetShortPathNameA(e.files.workspace_root, short_root, sizeof short_root));
+  const char *filename = doc->filename;
+  doc->filename = short_file;
+  assert(documents_unsaved_in(&e, e.files.workspace_root));
+  assert(documents_unsaved_in(&e, short_root));
+  doc->filename = filename;
+  char *pending = path_join(short_root, "not-created.txt");
+  char *resolved = path_absolute(pending);
+  char *expected = path_join(e.files.workspace_root, "not-created.txt");
+  assert(resolved && !strcmp(resolved, expected));
+  free(pending);
+  free(resolved);
+  free(expected);
+#endif
   assert(tabs_new(&e));
   documents_open(&e, argv[1], NULL);
   test_prefix_shared(&e, 'u');

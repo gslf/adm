@@ -683,6 +683,64 @@ def run_search(binary):
     print("Search terminal regressions passed.")
 
 
+def run_modal(binary):
+    with tempfile.TemporaryDirectory(prefix="adm-modal-terminal-") as directory:
+        root = Path(directory)
+        filename = root / "doc.c"
+        original = "needle needle\nsecond\n"
+        filename.write_text(original)
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
+        environment = dict(os.environ, ADM_CONFIG=str(root / "no-config"))
+        process = subprocess.Popen([str(binary), filename.name], cwd=root, env=environment,
+                                   stdin=slave, stdout=slave, stderr=slave)
+        os.close(slave)
+        terminal = Terminal(24, 100)
+
+        def update(keys=b""):
+            if keys:
+                os.write(master, keys)
+            terminal.feed(read_frame(master))
+            return "\n".join(terminal.lines())
+
+        try:
+            update()
+            assert "SEARCH FILE TEXT" in update(b"\x13needle")
+            assert "SEARCH FILE TEXT" not in update(b"\x1b")
+            assert "Command Center" in update(b"\x13needle\x18")
+            assert "LSP  M-x" in update(b"\x1bx")
+            assert "Command Center" in update(b"\x18")
+            update(b"\x1b")
+            assert "LSP  M-x" in update(b"\x18Sneedle\x1bx")
+            update(b"\x1b")
+            assert "RENAME New name" in update(b"\x1bxN")
+            assert "Command Center" in update(b"name\x18")
+            assert "Navigation help" in update(b"?")
+            assert "LSP  M-x" in update(b"\x1bx")
+            update(b"\x1b")
+            update(b"\x18m")
+            assert "Command Center" in update(b"\x18")
+            update(b"\x1b")
+            assert "USER CENTER" in update(b"\x1bc")
+            assert "Command Center" in update(b"\x18")
+            update(b"\x1b")
+            assert filename.read_text() == original
+            # A dirty buffer still needs confirmation when quitting from search.
+            update(b"!\x13needle")
+            assert "Quit without saving?" in update(b"\x18\x03")
+            assert "Quit without saving?" not in update(b"\x1b")
+            assert process.poll() is None
+            update(b"\x13needle\x18\x03y")
+            assert process.wait(timeout=3) == 0
+            assert filename.read_text() == original
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+    print("Global modal-key terminal regressions passed.")
+
+
 def run_undo(binary):
     with tempfile.TemporaryDirectory(prefix="adm-undo-terminal-") as directory:
         filename = Path(directory) / "doc.txt"

@@ -5,11 +5,27 @@
 #include <string.h>
 #ifdef _WIN32
 #include <direct.h>
+#include <windows.h>
 static char *normalize(char *path) {
   for (char *p = path; p && *p; p++)
     if (*p == '\\')
       *p = '/';
   return path;
+}
+
+static char *long_name(const char *path) {
+  DWORD size = GetLongPathNameA(path, NULL, 0);
+  if (!size)
+    return NULL;
+  char *resolved = malloc(size);
+  if (resolved) {
+    DWORD written = GetLongPathNameA(path, resolved, size);
+    if (!written || written >= size) {
+      free(resolved);
+      resolved = NULL;
+    }
+  }
+  return resolved;
 }
 #else
 #include <unistd.h>
@@ -26,7 +42,28 @@ char *path_join(const char *directory, const char *name) {
 
 char *path_absolute(const char *path) {
 #ifdef _WIN32
-  return normalize(_fullpath(NULL, path, 0));
+  char *absolute = normalize(_fullpath(NULL, path, 0));
+  if (!absolute)
+    return NULL;
+  char *resolved = long_name(absolute);
+  if (!resolved) {
+    // A new file has no long name yet; resolve the existing parent instead.
+    char *slash = strrchr(absolute, '/');
+    if (slash && slash > absolute + 2) {
+      *slash = '\0';
+      char *parent = long_name(absolute);
+      *slash = '/';
+      if (parent) {
+        normalize(parent);
+        resolved = path_join(parent, slash + 1);
+        free(parent);
+      }
+    }
+  }
+  if (!resolved)
+    return absolute;
+  free(absolute);
+  return normalize(resolved);
 #else
   char *resolved = realpath(path, NULL);
   if (resolved)
@@ -55,7 +92,10 @@ char *path_absolute(const char *path) {
 
 char *path_current_directory(void) {
 #ifdef _WIN32
-  return normalize(_getcwd(NULL, 0));
+  char *cwd = _getcwd(NULL, 0);
+  char *resolved = cwd ? path_absolute(cwd) : NULL;
+  free(cwd);
+  return resolved;
 #else
   return getcwd(NULL, 0);
 #endif

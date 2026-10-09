@@ -195,7 +195,7 @@ int main(int argc, char **argv) {
   prefix(&e, 'S');
   type(&e, "needle");
   assert(wait_search(&e) == 5);
-  rect area = {0, 1, 80, 30};
+  rect area = {0, 1, (int)strlen(e.files.workspace_root) + 80, 30};
   abuf ab = {0};
   assert(search_files_draw(&e, &ab, area));
   ab_append(&ab, "\0", 1);
@@ -228,6 +228,8 @@ int main(int argc, char **argv) {
     dispatch_tick(&e);
     pause_worker();
   }
+  if (search_active(&e) || !strstr(e.notice, "3 files changed"))
+    fprintf(stderr, "Workspace replacement (active=%d): %s\n", search_active(&e), e.notice);
   assert(!search_active(&e) && strstr(e.notice, "3 files changed"));
   char *saved = file_read("folder/nested.txt");
   assert(saved && !strcmp(saved, "found\r\nfound"));

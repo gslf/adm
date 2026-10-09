@@ -345,10 +345,54 @@ static int creation_key(int key) {
   return key == CTRL('q') || key == CTRL('u') || key == CTRL('t');
 }
 
+static void cancel_confirmation(editor *e) {
+  command cancel = e->confirmation_cancel;
+  e->confirmation = NULL;
+  e->confirmation_cancel = NULL;
+  e->confirmation_prompt = NULL;
+  if (cancel)
+    cancel(e);
+}
+
+// Global menu keys and Esc must run before any prompt or module consumes input.
+static int cancel_modes(editor *e) {
+  int active = e->prefix_active || e->move_active || e->help_active ||
+      e->confirmation || e->new_file.active || search_active(e) ||
+      lsp_modal(e) || plugins_modal(e) || e->git.mode != GIT_FILES;
+  cancel_confirmation(e);
+  if (e->new_file.active)
+    new_file_key(e, '\x1b');
+  search_cancel(e);
+  if (plugins_modal(e))
+    plugins_key(e, '\x1b');
+  lsp_cancel(e);
+  e->prefix_active = e->move_active = e->help_active = 0;
+  e->git.mode = GIT_FILES;
+  return active;
+}
+
 static void dispatch_key_impl(editor *e, int key) {
   if (key == KEY_NONE)
     return;
   e->notice[0] = '\0';
+  if (key == '\x1b') {
+    if (!cancel_modes(e)) {
+      e->sidebar.focused = 0;
+      selection_clear(e);
+    }
+    return;
+  }
+  if (key == CTRL('x') || key == META('x')) {
+    if (key == CTRL('x') && e->prefix_active)
+      return;
+    cancel_modes(e);
+    if (key == CTRL('x')) {
+      e->prefix_active = 1;
+      e->prefix_scroll = 0;
+    } else
+      lsp_key(e, key);
+    return;
+  }
   if (new_file_key(e, key))
     return;
 
@@ -383,9 +427,6 @@ static void dispatch_key_impl(editor *e, int key) {
     return;
 
   if (e->prefix_active) {
-    // Repeating the prefix leaves the menu open without inserting text.
-    if (key == CTRL('x'))
-      return;
     if (key == KEY_UP || key == KEY_DOWN || key == KEY_PGUP || key == KEY_PGDOWN) {
       int step = key == KEY_UP ? -1 : key == KEY_DOWN ? 1 :
                  key == KEY_PGUP ? -command_menu_capacity(e) : command_menu_capacity(e);
@@ -422,14 +463,8 @@ static void dispatch_key_impl(editor *e, int key) {
     return;
   }
 
-  if (e->sidebar.focused && key != CTRL('x')) {
+  if (e->sidebar.focused) {
     sidebar_key(e, key);
-    return;
-  }
-
-  if (key == CTRL('x')) {
-    e->prefix_active = 1;
-    e->prefix_scroll = 0;
     return;
   }
 

@@ -9,7 +9,12 @@ permissions:
   contents: write
 
 jobs:
+  validate:
+    name: Validate release
+    uses: ./.github/workflows/build.yml
+
   build:
+    needs: validate
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -33,7 +38,7 @@ jobs:
 
       - name: Build
         shell: bash
-        run: make CFLAGS="-std=c11 -Wall -Wextra -O2 -D_DEFAULT_SOURCE ${{ matrix.arch_flags }}"
+        run: make CFLAGS="-std=c11 -Wall -Wextra -Werror -O2 -D_DEFAULT_SOURCE ${{ matrix.arch_flags }}"
 
       - name: Package
         shell: bash

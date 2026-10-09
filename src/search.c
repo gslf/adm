@@ -32,7 +32,7 @@ struct search_state {
   search_progress progress;
   uint64_t selected, replace_index, replaced;
   size_t selected_file, file_offset;
-  int path_offset, shown, initial, cancelled;
+  int path_offset, shown, initial;
   search_hit pending, cache[256];
   uint64_t cache_first;
   size_t cache_count;
@@ -153,6 +153,25 @@ static void close_search(editor *e, int accept) {
   else
     selection_clear(e);
   s->active = 0;
+}
+
+void search_cancel(editor *e) {
+  search_state *s = e->search;
+  if (!s || !s->active)
+    return;
+  if (s->phase == WORKSPACE_REPLACING) {
+    // Finish cooperative cancellation before menus can edit or save buffers.
+    search_job_cancel(s->job, 1);
+    search_job_progress(s->job, &s->progress);
+    if (s->progress.changed)
+      documents_reload(e, e->files.workspace_root);
+    snprintf(e->notice, sizeof e->notice,
+             "Replacement cancelled: %llu files changed, %llu skipped",
+             (unsigned long long)s->progress.changed,
+             (unsigned long long)s->progress.skipped);
+    close_search(e, 1);
+  } else
+    close_search(e, s->phase == FILE_REPLACING);
 }
 static void select_hit(editor *e, const search_hit *h) {
   search_state *s = e->search;
@@ -290,7 +309,6 @@ static void workspace_replace_confirmed(editor *e) {
     return;
   }
   s->phase = WORKSPACE_REPLACING;
-  s->cancelled = 0;
 }
 static void replace_all(editor *e) {
   search_state *s = e->search;
@@ -318,7 +336,6 @@ static void replace_all(editor *e) {
     undo_group_begin(e);
     s->replace_index = 0;
     s->phase = FILE_REPLACING;
-    s->cancelled = 0;
   }
 }
 static int cached_hit(search_state *s, uint64_t index, search_hit *hit) {
@@ -434,8 +451,7 @@ void search_tick(editor *e) {
       if (s->progress.changed)
         documents_reload(e, e->files.workspace_root);
       snprintf(e->notice, sizeof e->notice,
-               "%s: %llu files changed, %llu skipped%s%s",
-               s->cancelled ? "Replacement cancelled" : "Replacement finished",
+               "Replacement finished: %llu files changed, %llu skipped%s%s",
                (unsigned long long)s->progress.changed,
                (unsigned long long)s->progress.skipped,
                s->progress.failed ? "; " : "",
@@ -531,25 +547,15 @@ static int on_key(editor *e, int key) {
   search_state *s = e->search;
   if (!s || !s->active)
     return 0;
+  if (key == '\x1b' || key == CTRL('g')) {
+    search_cancel(e);
+    return 1;
+  }
   search_tick(e);
   if (!s->active)
     return 0;
-  if (s->phase == WORKSPACE_REPLACING) {
-    if (key == '\x1b' || key == CTRL('g')) {
-      s->cancelled = 1;
-      search_job_cancel(s->job, 0);
-    }
+  if (s->phase == WORKSPACE_REPLACING || s->phase == FILE_REPLACING)
     return 1;
-  }
-  if (s->phase == FILE_REPLACING) {
-    if (key == '\x1b' || key == CTRL('g'))
-      close_search(e, 1);
-    return 1;
-  }
-  if (key == '\x1b' || key == CTRL('g')) {
-    close_search(e, 0);
-    return 1;
-  }
   if (s->goto_mode) {
     if (key == '\r' || key == '\n')
       close_search(e, s->length > 0);

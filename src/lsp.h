@@ -11,6 +11,7 @@ void lsp_tick(struct editor *e);
 int lsp_busy(const struct editor *e);
 int lsp_modal(const struct editor *e);
 int lsp_key(struct editor *e, int key);
+void lsp_cancel(struct editor *e);
 void lsp_detach(struct document *doc);
 void lsp_saved(struct document *doc);
 int lsp_version(const struct document *doc);

@@ -270,6 +270,12 @@ int documents_editable(const editor *e) {
 static int belongs(const document *doc, const char *root) {
   if (!doc || !doc->filename || !root || !*root)
     return 0;
+#ifdef _WIN32
+  char *canonical_root = path_absolute(root);
+  if (!canonical_root)
+    return 0;
+  root = canonical_root;
+#endif
   char *path = path_absolute(doc->filename);
   if (!path) {
     if (doc->filename[0] == '/' || (strlen(doc->filename) > 1 && doc->filename[1] == ':'))
@@ -291,6 +297,9 @@ static int belongs(const document *doc, const char *root) {
 #endif
       (root[length - 1] == '/' || path[length] == '/' || path[length] == '\\');
   free(path);
+#ifdef _WIN32
+  free(canonical_root);
+#endif
   return match;
 }
 

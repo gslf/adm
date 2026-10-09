@@ -46,13 +46,13 @@ def git_fixture(parent):
     for name, content in (("alpha.txt", "base\n"), ("dual.txt", "before\nbase\nafter\n"),
                           ("old.txt", "rename\n"), ("deleted.txt", "deleted\n"),
                           ("vanishing.txt", "vanishing\n")):
-        (repository / name).write_text(content)
+        (repository / name).write_bytes(content.encode())
     git(repository, "add", "-A")
     git(repository, "commit", "-m", "Initial files")
     git(repository, "branch", "pull-target")
     git(repository, "switch", "-c", "feature")
-    (repository / "alpha.txt").write_text("feature\n")
-    (repository / "feature.txt").write_text("feature file\n")
+    (repository / "alpha.txt").write_bytes(b"feature\n")
+    (repository / "feature.txt").write_bytes(b"feature file\n")
     (repository / "vanishing.txt").unlink()
     git(repository, "add", "-A")
     git(repository, "commit", "-m", "Feature changes")
@@ -66,20 +66,20 @@ def git_fixture(parent):
     git(client, "config", "user.name", "adm tests")
     git(client, "config", "user.email", "tests@example.invalid")
     git(client, "config", "commit.gpgsign", "false")
-    (client / "remote-target.txt").write_text("remote content\n")
+    (client / "remote-target.txt").write_bytes(b"remote content\n")
     git(client, "add", "-A")
     git(client, "commit", "-m", "Remote update")
     git(client, "push")
     git(repository, "fetch", "origin")
-    (repository / "dual.txt").write_text("before\nstaged\nafter\n")
+    (repository / "dual.txt").write_bytes(b"before\nstaged\nafter\n")
     git(repository, "add", "dual.txt")
-    (repository / "dual.txt").write_text("before\nunstaged\nafter\n")
+    (repository / "dual.txt").write_bytes(b"before\nunstaged\nafter\n")
     (repository / "old.txt").rename(repository / "renamed file.txt")
     git(repository, "add", "--", "old.txt", "renamed file.txt")
-    (repository / "alpha.txt").write_text("alpha change\n")
+    (repository / "alpha.txt").write_bytes(b"alpha change\n")
     (repository / "deleted.txt").unlink()
     for name in ("new file.txt", "literal[1].txt", "literal1.txt", "界.txt"):
-        (repository / name).write_text("new content\n")
+        (repository / name).write_bytes(b"new content\n")
     if os.name == "posix":
         (repository / "line\nbreak.txt").write_text("newline filename\n")
         runtime_bin = parent / "git-bin"
@@ -90,6 +90,7 @@ def git_fixture(parent):
 
 
 with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
+    directory = str(Path(directory).resolve())
     sources = sorted(p for p in (root / "src").glob("*.c") if p.name != "main.c")
     compiler = shlex.split(os.environ.get("CC", "cc"))
     flags = shlex.split(os.environ.get("CFLAGS", "-std=c11 -Wall -Wextra -O2 -D_DEFAULT_SOURCE"))
@@ -97,28 +98,34 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
         flags.append("-pthread")
     link_flags = shlex.split(os.environ.get("LDLIBS", "-ldl" if sys.platform.startswith("linux") else ""))
     os.environ["ADM_CONFIG"] = str(Path(directory) / "no-user-config")
-    suites = ("config", "plugins", "languages", "lsp", "lsp_edits", "pattern", "search", "undo", "controls", "navigation", "splits", "tabs", "empty_views", "large_files", "lifecycle", "file_manager", "file_operations", "screen", "process", "diff", "git", "git_initial")
+    suites = ("config", "plugins", "languages", "lsp", "lsp_edits", "pattern", "search", "undo", "controls", "navigation", "modal", "splits", "tabs", "empty_views", "large_files", "lifecycle", "file_manager", "file_operations", "screen", "process", "diff", "git", "git_initial")
     if os.name == "nt":
         suites += ("terminal_mode",)
+    else:
+        suites += ("clipboard",)
     if arguments.suite:
         unknown = set(arguments.suite) - set(suites)
         if unknown:
             parser.error("Unknown suites: " + ", ".join(sorted(unknown)))
         suites = tuple(suite for suite in suites if suite in arguments.suite)
     for suite in suites:
-        binary = Path(directory) / suite
+        # On Windows CreateProcess searches the executable's directory first;
+        # a regression binary named git.exe would shadow the real Git client.
+        binary = Path(directory) / ("adm-test-" + suite)
         # Keep project headers out of <...> searches: src/process.h otherwise
         # shadows the Windows CRT header declaring _beginthreadex.
         subprocess.run(compiler + flags + (["-DADM_TEST_ALLOC"] if suite in ("undo", "lsp_edits", "plugins") else []) + ["-iquote", str(root / "src"), "-o", str(binary),
                                          str(root / "tests" / f"{suite}.c")]
-                       + [str(p) for p in sources] + link_flags, check=True)
+                       + [str(p) for p in sources if suite != "clipboard" or p.name != "clipboard.c"] + link_flags, check=True)
         environment = dict(os.environ, PATH="")
         argument = Path(directory) / f"{suite}.txt"
         working_directory = root
-        if suite in ("config", "plugins"):
+        if suite in ("config", "plugins", "modal"):
             working_directory = Path(directory) / (suite + " workspace")
             working_directory.mkdir()
             argument = working_directory / "document.txt"
+            if suite == "modal":
+                argument = working_directory / "document.c"
             environment["ADM_TEST_THEMES"] = str(root / "themes")
         if suite == "plugins":
             extension = ".dll" if os.name == "nt" else ".dylib" if sys.platform == "darwin" else ".so"
@@ -146,7 +153,7 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
                 subprocess.run([shutil.which("git"), "-C", str(working_directory), "config", name, value],
                                env=environment, check=True)
             for name in ("alpha.txt", "beta.txt"):
-                (working_directory / name).write_text("new content\n")
+                (working_directory / name).write_bytes(b"new content\n")
             if os.name == "posix":
                 environment["PATH"] = str(Path(directory) / "git-bin")
                 hook = working_directory / ".git" / "hooks" / "pre-commit"
@@ -160,8 +167,8 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
             (working_directory / ".git").mkdir()
             (working_directory / "folder" / "nested.txt").write_bytes(b"needle\r\nneedle")
             (working_directory / ".hidden.txt").write_bytes(b"\xef\xbb\xbfneedle\n")
-            (working_directory / ".git" / "metadata").write_text("needle\n")
-            (working_directory / "unrelated.txt").write_text("nothing\n")
+            (working_directory / ".git" / "metadata").write_bytes(b"needle\n")
+            (working_directory / "unrelated.txt").write_bytes(b"nothing\n")
             (working_directory / "binary.bin").write_bytes(b"needle\n" + b"x" * 65536 + b"\0")
             if os.name == "posix":
                 (working_directory / "folder" / "loop").symlink_to(working_directory, target_is_directory=True)
@@ -171,18 +178,18 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
             working_directory = Path(directory) / "empty views"
             working_directory.mkdir()
             (working_directory / "folder").mkdir()
-            (working_directory / "existing.txt").write_text("keep\n")
+            (working_directory / "existing.txt").write_bytes(b"keep\n")
             argument = working_directory / "absolute.txt"
         if suite in ("file_manager", "file_operations"):
             working_directory = Path(directory) / (suite + " files")
             working_directory.mkdir()
             (working_directory / "empty").mkdir()
             (working_directory / "folder").mkdir()
-            (working_directory / "folder" / "nested.txt").write_text("nested\n")
+            (working_directory / "folder" / "nested.txt").write_bytes(b"nested\n")
             for name in ("alpha", "beta", "gamma", "gone"):
                 (working_directory / f"{name}.txt").write_bytes(f"{name}\n".encode())
             (working_directory / "nul.bin").write_bytes(b"before\0after")
-            (working_directory / ".hidden").write_text("hidden\n")
+            (working_directory / ".hidden").write_bytes(b"hidden\n")
             if os.name == "posix":
                 (working_directory / "beta.link").symlink_to("beta.txt")
                 os.mkfifo(working_directory / "pipe")
@@ -197,7 +204,7 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
                 working_directory, "log", "--all", "--format=%s")
         print(f"{suite.capitalize()} regressions passed.")
     if os.name == "posix" and not arguments.suite:
-        from terminal import run, run_empty, run_file_manager, run_file_operations, run_git, run_search, run_undo, run_lsp
+        from terminal import run, run_empty, run_file_manager, run_file_operations, run_git, run_search, run_modal, run_undo, run_lsp
         binary = Path(directory) / "adm"
         subprocess.run(compiler + flags + ["-o", str(binary), str(root / "src" / "main.c")]
                        + [str(p) for p in sources] + link_flags, check=True)
@@ -210,6 +217,7 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
         run_undo(binary)
         run_lsp(binary)
         run_search(binary)
+        run_modal(binary)
         run_empty(binary)
         run_file_manager(binary)
         run_file_operations(binary)

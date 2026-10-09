@@ -1,6 +1,7 @@
 name: Build and regressions
 
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:
@@ -22,9 +23,9 @@ jobs:
         shell: bash
         run: cc -std=c11 -Wall -Wextra -Werror -O2 -shared -Isrc plugins/timestamp.c -o timestamp.dll
 
-      - name: Run rendering regressions
+      - name: Run regressions
         shell: bash
-        run: CC=cc CFLAGS="-std=c11 -Wall -Wextra -Werror -O2 -D_DEFAULT_SOURCE" python tests/run_controls.py --suite config --suite file_manager --suite file_operations --suite screen --suite terminal_mode
+        run: CC=cc CFLAGS="-std=c11 -Wall -Wextra -Werror -O2 -D_DEFAULT_SOURCE" python tests/run_controls.py
 
   unix:
     strategy:
@@ -35,5 +36,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build editor
         run: make CFLAGS="-std=c11 -Wall -Wextra -Werror -O2 -D_DEFAULT_SOURCE"
+      - name: Build with fortified libc checks
+        if: runner.os == 'Linux'
+        run: make -B CFLAGS="-std=c11 -Wall -Wextra -Werror -O2 -D_DEFAULT_SOURCE -D_FORTIFY_SOURCE=3"
       - name: Run regressions and terminal tests
         run: make test CFLAGS="-std=c11 -Wall -Wextra -Werror -O2 -D_DEFAULT_SOURCE"

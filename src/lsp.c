@@ -1333,6 +1333,15 @@ const char *lsp_status(const editor *e) {
 int lsp_modal(const editor *e) {
   return e->lsp && (e->lsp->menu || e->lsp->popup || e->lsp->name_prompt);
 }
+
+void lsp_cancel(editor *e) {
+  struct lsp_state *l = e->lsp;
+  if (!l)
+    return;
+  cancel_request(l);
+  clear_popup(l);
+  l->name_prompt = l->menu = 0;
+}
 static int rename_key(editor *e, int key) {
   struct lsp_state *l = e->lsp;
   if (!l->name_prompt)
