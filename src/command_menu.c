@@ -18,36 +18,34 @@ static int secondary(const editor *e, const command_binding *entry) {
   return partner(e, entry) && entry->key != entry->pair_primary;
 }
 
-static int section_count(const editor *e, int control) {
-  int rows = 0, count = dispatch_prefix_count(e);
-  for (int i = 0; i < count; i++) {
+// Prefix entries are bounded by the key slots; one more row separates groups.
+#define MENU_ROWS 512
+
+// Plain suffixes precede Ctrl suffixes, with a blank row (NULL) between the
+// groups. Paired keys share the row of their primary key.
+static int menu_rows(const editor *e, const command_binding **rows) {
+  const command_binding *control[MENU_ROWS];
+  int count = dispatch_prefix_count(e), plain = 0, controls = 0;
+  for (int i = 0; i < count && i < MENU_ROWS - 1; i++) {
     const command_binding *entry = dispatch_prefix_at(e, i);
-    rows += (entry->key < 32) == control && !secondary(e, entry);
+    if (secondary(e, entry))
+      continue;
+    if (entry->key < 32)
+      control[controls++] = entry;
+    else
+      rows[plain++] = entry;
   }
-  return rows;
+  int n = plain;
+  if (plain > 0 && controls > 0)
+    rows[n++] = NULL;
+  for (int i = 0; i < controls; i++)
+    rows[n++] = control[i];
+  return n;
 }
 
 int command_menu_count(const editor *e) {
-  int plain = section_count(e, 0), control = section_count(e, 1);
-  return plain + control + (plain > 0 && control > 0);
-}
-
-// Plain suffixes precede Ctrl suffixes, with a blank row between the groups.
-static const command_binding *menu_entry(const editor *e, int row) {
-  int plain = section_count(e, 0), control = section_count(e, 1);
-  int section = row >= plain;
-  if (section) {
-    row -= plain;
-    if (plain > 0 && control > 0 && row-- == 0)
-      return NULL;
-  }
-  int count = dispatch_prefix_count(e);
-  for (int i = 0; i < count; i++) {
-    const command_binding *entry = dispatch_prefix_at(e, i);
-    if ((entry->key < 32) == section && !secondary(e, entry) && row-- == 0)
-      return entry;
-  }
-  return NULL;
+  const command_binding *rows[MENU_ROWS];
+  return menu_rows(e, rows);
 }
 
 static void binding_keys(const command_binding *entry, char *keys, size_t size) {
@@ -59,9 +57,8 @@ static void binding_keys(const command_binding *entry, char *keys, size_t size) 
     snprintf(keys, size, "%s", entry->keys);
 }
 
-static void row_text(const editor *e, int row, char *keys, size_t size,
-                     const char **label) {
-  const command_binding *entry = menu_entry(e, row);
+static void row_text(const editor *e, const command_binding *entry, char *keys,
+                     size_t size, const char **label) {
   if (!entry) {
     keys[0] = '\0';
     *label = "";
@@ -101,7 +98,8 @@ static void centered(char *line, size_t size, const char *text, int width) {
 
 // Compute columns from the entire visible menu so scrolling keeps rows aligned.
 void command_menu_draw(editor *e, abuf *ab) {
-  int count = command_menu_count(e);
+  const command_binding *rows[MENU_ROWS];
+  int count = menu_rows(e, rows);
   int text_rows = e->rows - 2;
   if (text_rows < 1 || e->cols < 1)
     return;
@@ -110,7 +108,7 @@ void command_menu_draw(editor *e, abuf *ab) {
   for (int i = 0; i < count; i++) {
     char keys[672];
     const char *label;
-    row_text(e, i, keys, sizeof keys, &label);
+    row_text(e, rows[i], keys, sizeof keys, &label);
     int length = (int)strlen(keys);
     if (length > key_width)
       key_width = length;
@@ -140,7 +138,8 @@ void command_menu_draw(editor *e, abuf *ab) {
     else if (y >= 2 && y < height - 2) {
       char keys[672];
       const char *label;
-      row_text(e, e->prefix_scroll + y - 2, keys, sizeof keys, &label);
+      int row = e->prefix_scroll + y - 2;
+      row_text(e, row < count ? rows[row] : NULL, keys, sizeof keys, &label);
       if (keys[0])
         snprintf(line, sizeof line, " %-*s - %s", key_width, keys, label);
     } else if (y == height - 2) {

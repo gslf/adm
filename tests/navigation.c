@@ -26,10 +26,11 @@ int main(int argc, char **argv) {
   assert(load(&e.document.buf, argv[1]) == 0);
   dispatch_register(search_module());
   dispatch_init(&e);
-  const char *removed = "oO0123npwTv";
+  const char *removed = "oO0123npTv";
   for (; *removed; removed++) assert(!dispatch_prefix_find(&e, *removed));
   assert(dispatch_prefix_find(&e, 'l') && dispatch_prefix_find(&e, 'f') &&
-         dispatch_prefix_find(&e, 'g') && dispatch_prefix_find(&e, 'k'));
+         dispatch_prefix_find(&e, 'g') && dispatch_prefix_find(&e, 'k') &&
+         dispatch_prefix_find(&e, 'w'));
   prefix(&e, 'f'); assert(e.sidebar.focused && e.sidebar.kind == SIDEBAR_FILES);
   prefix(&e, 'f'); assert(e.sidebar.focused); // Open is idempotent.
   dispatch_key(&e, CTRL('l')); assert(!e.sidebar.focused); at(&e, 0);

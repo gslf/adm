@@ -203,8 +203,11 @@ size_t buffer_char_count(buffer *b) {
         if (k->chars[i] == SIZE_MAX) {
           size_t count = 0;
           const char *s = k->lines[i];
-          for (int j = 0; s[j]; j = grapheme_next(s, j))
-            count++;
+          // ASCII followed by ASCII is a whole cluster, so long ASCII lines
+          // are counted without decoding every character.
+          for (int j = 0; s[j]; count++)
+            j = (unsigned char)s[j] < 0x80 && (unsigned char)s[j + 1] < 0x80
+                    ? j + 1 : grapheme_next(s, j);
           k->chars[i] = count;
         }
         k->char_total += k->chars[i];

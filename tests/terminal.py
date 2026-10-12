@@ -342,6 +342,58 @@ def run_empty(binary):
     print("Empty-view terminal regressions passed.")
 
 
+
+def run_wrap(binary):
+    with tempfile.TemporaryDirectory(prefix="adm-wrap-terminal-") as directory:
+        words = " ".join(f"word{i:02d}" for i in range(30))
+        filename = Path(directory) / "wrap.txt"
+        filename.write_text("short\n" + words + "\nend\n")
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 12, 40, 0, 0))
+        process = subprocess.Popen([str(binary), filename.name], cwd=directory,
+                                   stdin=slave, stdout=slave, stderr=slave)
+        os.close(slave)
+        terminal = Terminal(12, 40)
+
+        def update(keys=b""):
+            if keys:
+                os.write(master, keys)
+            terminal.feed(read_frame(master))
+            return [line.rstrip() for line in terminal.lines()]
+
+        try:
+            # Word wrap is on by default. Each buffer line keeps one number,
+            # on its first row; continuation rows leave the gutter blank.
+            lines = update()
+            rows = [words[start:start + 34] for start in range(0, len(words), 35)]
+            assert lines[1:9] == ["1 short", "2 " + rows[0]] + ["  " + row for row in rows[1:]] + ["3 end"], lines
+            assert lines[9] == "~" and lines[10] == "~" and "lines 3" in lines[11]
+            # Up/Down follow visual rows; the bottom bar reports buffer lines.
+            lines = update(b"\x1b[B\x1b[B")
+            assert (terminal.row, terminal.col) == (3, 2) and " 2:36 " in lines[11]
+            lines = update(b"\x05")
+            assert (terminal.row, terminal.col) == (7, 36) and " 2:210 " in lines[11]
+            menu = update(b"\x18")
+            for _ in range(4):
+                menu += update(b"\x1b[6~")
+            assert any("| w       - Toggle word wrap" in line for line in menu), menu
+            update(b"\x07")
+            # Without wrapping the long line scrolls sideways on one row.
+            lines = update(b"\x18w")
+            assert "Word wrap off" in lines[11] and lines[2].endswith("word29"), lines
+            assert lines[1:5] == ["1", "2 " + words[-37:], "3", "~"] and terminal.row == 2, lines
+            lines = update(b"\x18w")
+            assert "Word wrap on" in lines[11] and lines[7] == "  " + rows[-1], lines
+            assert (terminal.row, terminal.col) == (7, 36)
+            assert "Quit without saving" not in "\n".join(update(b"\x18\x03"))
+            wait_exit(process, master)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+    print("Word-wrap terminal regressions passed.")
+
 def run_file_operations(binary):
     with tempfile.TemporaryDirectory(prefix="adm-file-operations-terminal-") as directory:
         root = Path(directory)
@@ -911,3 +963,69 @@ def run_lsp(binary):
                 process.wait()
             os.close(master)
     print("LSP terminal regressions passed.")
+
+
+def run_escape(binary):
+    """Esc acts at once and never swallows the key typed right after it."""
+    with tempfile.TemporaryDirectory(prefix="adm-escape-terminal-") as directory:
+        filename = Path(directory) / "escape.txt"
+        filename.write_text("hello\nsecond\n")
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        process = subprocess.Popen([str(binary), filename.name], cwd=directory,
+                                   stdin=slave, stdout=slave, stderr=slave)
+        os.close(slave)
+        terminal = Terminal(24, 80)
+
+        def update(keys=b""):
+            if keys:
+                os.write(master, keys)
+            terminal.feed(read_frame(master))
+            return "\n".join(terminal.lines())
+
+        def wait_for(predicate, timeout=2.0):
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if select.select([master], [], [], max(0, deadline - time.monotonic()))[0]:
+                    terminal.feed(os.read(master, 65536))
+                    if predicate("\n".join(terminal.lines())):
+                        return time.monotonic()
+            raise AssertionError("screen did not settle:\n" + "\n".join(terminal.lines()))
+
+        def quickly(first, second):
+            os.write(master, first)
+            time.sleep(0.03)  # Past the sequence timeout, inside the Meta window.
+            return update(second)
+
+        try:
+            assert " [C-x] " in update()
+            # Closing a menu with Esc does not wait for a possible sequence.
+            latencies = []
+            for _ in range(3):
+                assert "Command Center" in update(b"\x18")
+                start = time.monotonic()
+                os.write(master, b"\x1b")
+                latencies.append(wait_for(lambda text: "Command Center" not in text) - start)
+                update()
+            assert min(latencies) < 0.08, latencies
+            # Keys typed right after a lone Esc are keys of their own.
+            assert "Command Center" in quickly(b"\x1b", b"\x18")
+            update(b"\x07")
+            screen = quickly(b"\x1b", b"\x1b[B")
+            assert "[B" not in screen and " 2:1 " in terminal.lines()[-1], screen
+            assert "2 asecond" in quickly(b"\x1b", b"a")
+            update(b"\x7f")
+            # Esc followed quickly by a Meta key still stands for Alt.
+            assert "LSP  M-x" in quickly(b"\x1b", b"x")
+            update(b"\x1b")
+            assert "LSP  M-x" in update(b"\x1bx")
+            update(b"\x1b")
+            update(b"\x18\x03y")  # The a/Backspace pair left the buffer dirty.
+            wait_exit(process, master)
+            assert filename.read_text() == "hello\nsecond\n"
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+    print("Escape-key terminal regressions passed.")

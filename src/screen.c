@@ -7,11 +7,14 @@
 #include "syntax.h"
 #include "lsp.h"
 #include "plugins.h"
+#include "wrap.h"
+#include "frame.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 
 #ifdef _WIN32
 #include <io.h>
@@ -43,20 +46,27 @@ static int write_output(const char *text, int length) {
 }
 
 void ab_append(abuf *ab, const char *s, int len) {
-  if (len <= 0)
+  if (len <= 0 || len > INT_MAX - ab->len)
     return;
-  char *nb = realloc(ab->b, ab->len + len);
-  if (!nb)
-    return;
-  memcpy(nb + ab->len, s, len);
-  ab->b = nb;
+  if (ab->len + len > ab->cap) {
+    // Geometric growth: a frame is thousands of small appends.
+    int cap = ab->cap ? ab->cap : 4096;
+    while (cap < ab->len + len)
+      cap = cap > INT_MAX / 2 ? INT_MAX : cap * 2;
+    char *nb = realloc(ab->b, cap);
+    if (!nb)
+      return;
+    ab->b = nb;
+    ab->cap = cap;
+  }
+  memcpy(ab->b + ab->len, s, len);
   ab->len += len;
 }
 
 void ab_free(abuf *ab) {
   free(ab->b);
   ab->b = NULL;
-  ab->len = 0;
+  ab->len = ab->cap = 0;
 }
 
 static void append_str(abuf *ab, const char *s) {
@@ -146,61 +156,55 @@ static const char *row_colours(const document *doc, int row) {
   }
 }
 
-static void draw_row(const view *v, abuf *ab, rect area, int y, int highlight) {
-  int row = v->rowoff + y;
-  screen_position(ab, area.x, area.y + y);
-  if (row >= v->doc->buf.nlines) {
-    ab_append(ab, "~", area.width > 0 ? 1 : 0);
-    return;
-  }
-  const char *colours = row_colours(v->doc, row);
-  if (v->doc->diff_lines) {
-    append_str(ab, colours);
-    screen_repeat(ab, ' ', area.width);
-    screen_position(ab, area.x, area.y + y);
-  }
-  int gutter = screen_gutter(v);
-  char number[32];
-  int digits = gutter - 1 < 11 ? gutter - 1 : 11;
-  snprintf(number, sizeof number, "%*d ", digits, row + 1);
-  screen_text(ab, number, area.width);
-  int width = area.width - gutter;
-  if (width <= 0) {
-    append_str(ab, theme_colour(THEME_NORMAL));
-    return;
-  }
-
-  const char *line = buffer_line(&v->doc->buf, row);
-  int len = line ? (int)strlen(line) : 0;
-  int sr, sc, er, ec, from = 0, to = 0;
-  if (view_selection_range(v, &sr, &sc, &er, &ec) && row >= sr && row <= er) {
-    from = row == sr ? sc : 0;
-    to = row == er ? ec : len + 1;
-  }
+// What one buffer line needs to paint any of its visual rows.
+typedef struct line_paint {
+  const char *text, *colours;
+  int len, from, to;
   syntax_span spans[256];
-  size_t span_count = highlight ? syntax_line(v->doc, row, spans, 256) : 0, span_index = 0;
+  size_t span_count;
+} line_paint;
+
+// Control characters in a document take one placeholder column, as
+// utf8_width measures them; sent as they are, they would move the cursor or
+// reach the terminal as escape sequences. Tabs keep the terminal's stops.
+static int control_character(const char *s, int i) {
+  unsigned char c = (unsigned char)s[i];
+  if (c < 0x20)
+    return c != '\t';
+  return c == 0x7f || (c == 0xc2 && (unsigned char)s[i + 1] >= 0x80 &&
+                       (unsigned char)s[i + 1] <= 0x9f);
+}
+
+// Paint the bytes [start, stop) of a line from column coloff. The end of the
+// line is painted as one cell only while a selection covers its newline.
+static void draw_segment(const view *v, abuf *ab, const line_paint *p,
+                         int start, int stop, int coloff, int width) {
+  const char *line = p->text;
+  size_t span_index = 0;
   syntax_kind previous_kind = SYNTAX_TEXT;
   int painted = 0, col = 0;
-  for (int j = 0; ; ) {
-    int inside = j >= from && j < to;
-    int at_end = j >= len;
-    if (at_end && !inside)
+  for (int j = start; ; ) {
+    int inside = j >= p->from && j < p->to;
+    int at_end = j >= p->len;
+    if ((at_end && !inside) || (!at_end && j >= stop))
       break;
     int w = at_end ? 1 : grapheme_width(line, j);
-    if (col + w > v->coloff + width)
+    if (col + w > coloff + width)
       break;
-    if (col >= v->coloff || col + w > v->coloff) {
-      while (span_index < span_count && j >= spans[span_index].end) span_index++;
-      syntax_kind kind = span_index < span_count && j >= spans[span_index].start
-                           ? spans[span_index].kind : SYNTAX_TEXT;
+    if (col >= coloff || col + w > coloff) {
+      while (span_index < p->span_count && j >= p->spans[span_index].end) span_index++;
+      syntax_kind kind = span_index < p->span_count && j >= p->spans[span_index].start
+                           ? p->spans[span_index].kind : SYNTAX_TEXT;
       if (inside != painted || (!inside && kind != previous_kind)) {
-        append_str(ab, inside ? SELECT_ON : colours);
+        append_str(ab, inside ? SELECT_ON : p->colours);
         if (!inside && !v->doc->diff_lines) append_str(ab, syntax_colour(kind));
         painted = inside;
         previous_kind = kind;
       }
-      if (at_end || col < v->coloff)
+      if (at_end || col < coloff)
         ab_append(ab, " ", 1);
+      else if (control_character(line, j))
+        ab_append(ab, "?", 1);
       else
         ab_append(ab, line + j, grapheme_next(line, j) - j);
     }
@@ -212,8 +216,60 @@ static void draw_row(const view *v, abuf *ab, rect area, int y, int highlight) {
       break;
     j = next;
   }
-  if (painted || v->doc->diff_lines || span_count)
+  if (painted || v->doc->diff_lines || p->span_count)
     append_str(ab, theme_colour(THEME_NORMAL));
+}
+
+// Draw a buffer line from its visual row skip onwards at screen row y and
+// return the rows used. Wrapped rows share one number, shown on the first.
+static int draw_line(const view *v, abuf *ab, rect area, int y, int row,
+                     int skip, int wrap, int highlight) {
+  if (row >= v->doc->buf.nlines) {
+    screen_position(ab, area.x, area.y + y);
+    ab_append(ab, "~", area.width > 0 ? 1 : 0);
+    return 1;
+  }
+  line_paint p = {.colours = row_colours(v->doc, row)};
+  const char *line = buffer_line(&v->doc->buf, row);
+  p.text = line ? line : "";
+  p.len = (int)strlen(p.text);
+  int sr, sc, er, ec;
+  if (view_selection_range(v, &sr, &sc, &er, &ec) && row >= sr && row <= er) {
+    p.from = row == sr ? sc : 0;
+    p.to = row == er ? ec : p.len + 1;
+  }
+  p.span_count = highlight ? syntax_line(v->doc, row, p.spans, 256) : 0;
+  int gutter = screen_gutter(v);
+  int width = area.width - gutter;
+  int digits = gutter - 1 < 11 ? gutter - 1 : 11;
+  int used = 0;
+  for (int start = 0, index = 0; y + used < area.height; index++) {
+    int next = wrap && width > 0 ? wrap_next(p.text, start, width) : -1;
+    if (index >= skip) {
+      screen_position(ab, area.x, area.y + y + used);
+      if (v->doc->diff_lines) {
+        append_str(ab, p.colours);
+        screen_repeat(ab, ' ', area.width);
+        screen_position(ab, area.x, area.y + y + used);
+      }
+      char number[32];
+      if (index == 0)
+        snprintf(number, sizeof number, "%*d ", digits, row + 1);
+      else
+        snprintf(number, sizeof number, "%*s ", digits, "");
+      screen_text(ab, number, area.width);
+      if (width > 0)
+        draw_segment(v, ab, &p, start, next < 0 ? p.len : next,
+                     wrap ? 0 : v->coloff, width);
+      else
+        append_str(ab, theme_colour(THEME_NORMAL));
+      used++;
+    }
+    if (next < 0)
+      break;
+    start = next;
+  }
+  return used;
 }
 
 void screen_empty(abuf *ab, rect area) {
@@ -267,10 +323,13 @@ static void draw_pane(editor *e, abuf *ab, view *v, int ordinal) {
     screen_empty(ab, area);
     return;
   }
-  cursor_scroll_view(v, area.width - screen_gutter(v), area.height);
+  int width = area.width - screen_gutter(v);
+  int wrap = e->wrap_enabled && width > 0;
+  cursor_scroll_view(v, width, area.height, wrap);
   if (e->syntax_enabled) syntax_prepare(v->doc, v->rowoff + area.height);
-  for (int y = 0; y < area.height; y++)
-    draw_row(v, ab, area, y, e->syntax_enabled);
+  int row = v->rowoff, skip = wrap ? v->wrapoff : 0;
+  for (int y = 0; y < area.height; row++, skip = 0)
+    y += draw_line(v, ab, area, y, row, skip, wrap, e->syntax_enabled);
 }
 
 static void draw_workspace(editor *e, abuf *ab) {
@@ -416,9 +475,9 @@ void screen_refresh(editor *e) {
   }
   if (e->view->doc && !search_active(e) && !e->move_active && !e->help_active && !e->new_file.active && !e->prefix_active && !lsp_modal(e) && !plugins_modal(e) && !e->confirmation && !e->sidebar.focused &&
       area.width > gutter && area.height > 0) {
-    int x = area.x + gutter + cursor_col(e) - e->view->coloff;
-    int y = area.y + e->view->cy - e->view->rowoff;
-    screen_position(&ab, x, y);
+    int x, y;
+    view_cursor_screen(e->view, area.width - gutter, e->wrap_enabled, &x, &y);
+    screen_position(&ab, area.x + gutter + x, area.y + y);
     append_str(&ab, "\x1b[?25h");
   }
   append_str(&ab, "\x1b[?2026l");
@@ -428,8 +487,17 @@ void screen_refresh(editor *e) {
     ab_free(&ab);
     return;
   }
-  ab_free(&previous_frame);
-  if (write_output(ab.b, ab.len) == 0) {
+  // Only the cells that differ from the screen are sent. A frame the cache
+  // cannot read back is written whole, and the next one repaints everything.
+  abuf update = {0};
+  int changed = frame_update(&previous_frame, &ab, e->rows, e->cols, &update);
+  const abuf *out = changed < 0 ? &ab : &update;
+  if (changed == 0 || write_output(out->b, out->len) == 0) {
+    if (changed < 0)
+      frame_forget();
+    else
+      frame_shown();
+    ab_free(&previous_frame);
     previous_frame = ab;
     previous_rows = e->rows;
     previous_cols = e->cols;
@@ -437,13 +505,20 @@ void screen_refresh(editor *e) {
     // Do not leave synchronized output enabled after an incomplete write.
     static const char end[] = "\x1b[?2026l\x1b[?25h";
     write_output(end, sizeof end - 1);
+    screen_invalidate();
     ab_free(&ab);
   }
+  ab_free(&update);
+}
+
+void screen_invalidate(void) {
+  ab_free(&previous_frame);
+  previous_rows = previous_cols = 0;
+  frame_forget();
 }
 
 void screen_clear(void) {
-  ab_free(&previous_frame);
-  previous_rows = previous_cols = 0;
+  screen_invalidate();
   static const char cleanup[] = "\x1b[?2026l\x1b[m\x1b[2J\x1b[H\x1b[?25h";
   write_output(cleanup, sizeof cleanup - 1);
 }

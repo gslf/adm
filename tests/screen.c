@@ -92,6 +92,16 @@ int main(int argc, char **argv) {
   dispatch_key(&e, CTRL('g'));
   frame(&e, output, &offset);
 
+  // Control characters in a document are placeholders, never terminal input.
+  assert(!buffer_replace_range(&e.view->doc->buf, 0, 0, 0,
+                               "bel\a esc\x1b[31m del\x7f c1\xc2\x9b"));
+  screen_refresh(&e);
+  char *controls = output_since(output, &offset);
+  assert(strstr(controls, "bel? esc?[31m del? c1?") && !strchr(controls, '\a'));
+  assert(!strstr(controls, "\x1b[31m") && !strstr(controls, "\xc2\x9b"));
+  free(controls);
+  idle(&e, output, &offset);
+
   screen_clear();
   char *cleanup = output_since(output, &offset);
   assert(strstr(cleanup, "\x1b[?2026l") && strstr(cleanup, "\x1b[?25h"));

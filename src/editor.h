@@ -25,6 +25,7 @@ typedef struct editor {
   struct lsp_state *lsp;
   struct plugin_state *plugins;
   int syntax_enabled;
+  int wrap_enabled;
   sidebar sidebar;
   git_panel git;
   document_request open_request;

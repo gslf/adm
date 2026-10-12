@@ -1,4 +1,5 @@
 #include "terminal.h"
+#include "runtime.h"
 
 #include <stdio.h>
 #include<stdlib.h>
@@ -133,8 +134,9 @@ int init_raw (void){
   raw.c_lflag &= ~IEXTEN;
   raw.c_lflag &= ~ISIG;
 
+  // Reads never block: term_wait decides how long to wait for input.
   raw.c_cc[VMIN] = 0;
-  raw.c_cc[VTIME] = 1;
+  raw.c_cc[VTIME] = 0;
 
   if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1)
     return -1;
@@ -180,27 +182,76 @@ int term_resized(void){
 
 #endif
 
-// Wait only for the first byte. Escape-sequence decoding retains its usual
-// timeout so Alt and arrow sequences work over ordinary SSH terminals.
+#ifdef _WIN32
+#include <io.h>
+
+// Modifier presses reach the console as key events but never as bytes.
+static int modifier_only(const KEY_EVENT_RECORD *key) {
+  switch (key->wVirtualKeyCode) {
+  case VK_SHIFT: case VK_CONTROL: case VK_MENU: case VK_CAPITAL:
+  case VK_LWIN: case VK_RWIN: case VK_NUMLOCK: case VK_SCROLL:
+    return 1;
+  default:
+    return 0;
+  }
+}
+#endif
+
+// Input already read from the terminal but not yet decoded into keys. A key
+// arrives as one burst, so a whole escape sequence is usually here at once.
+static unsigned char pending[512];
+static int pending_start, pending_end;
+
 int term_wait(int milliseconds) {
+  if (pending_start < pending_end)
+    return 1;
 #ifdef _WIN32
   HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
   DWORD start = GetTickCount();
-  do {
+  for (;;) {
     DWORD elapsed = GetTickCount() - start;
-    if (elapsed >= (DWORD)milliseconds) return 0;
-    if (WaitForSingleObject(input, (DWORD)milliseconds - elapsed) != WAIT_OBJECT_0)
+    DWORD remaining = elapsed < (DWORD)milliseconds ? (DWORD)milliseconds - elapsed : 0;
+    if (WaitForSingleObject(input, remaining) != WAIT_OBJECT_0)
       return 0;
     INPUT_RECORD record;
     DWORD count;
     if (!PeekConsoleInput(input, &record, 1, &count) || !count) return 0;
-    if (record.EventType == KEY_EVENT && record.Event.KeyEvent.bKeyDown)
+    if (record.EventType == KEY_EVENT && record.Event.KeyEvent.bKeyDown &&
+        !modifier_only(&record.Event.KeyEvent))
       return 1;
-    // Resize/focus/mouse events do not yield bytes through the CRT reader.
+    // Resize/focus/mouse events and modifier presses do not yield bytes
+    // through the CRT reader, which would otherwise block on them.
     ReadConsoleInput(input, &record, 1, &count);
-  } while (1);
+  }
 #else
   struct pollfd input = {STDIN_FILENO, POLLIN, 0};
   return poll(&input, 1, milliseconds) > 0 && (input.revents & POLLIN);
 #endif
+}
+
+int term_read(int milliseconds) {
+  if (pending_start == pending_end) {
+    if (!term_wait(milliseconds))
+      return -1;
+#ifdef _WIN32
+    int n = _read(0, pending, 1);
+#else
+    int n = (int)read(STDIN_FILENO, pending, sizeof pending);
+#endif
+    pending_start = 0;
+    pending_end = n > 0 ? n : 0;
+    if (!pending_end)
+      return -1;
+  }
+  return pending[pending_start++];
+}
+
+void term_unread(void) {
+  if (pending_start > 0)
+    pending_start--;
+}
+
+// Out of line, so that key decoding does not pull in <windows.h>.
+unsigned long long term_milliseconds(void) {
+  return adm_milliseconds();
 }

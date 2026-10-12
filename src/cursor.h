@@ -46,10 +46,15 @@ int selection_char_count(const editor *e);
 int cursor_col(const editor *e);
 int view_cursor_col(const view *v);
 int view_selection_range(const view *v, int *sr, int *sc, int *er, int *ec);
-void cursor_scroll_view(view *v, int width, int height);
+// With wrap set, lines wrap at width and the view scrolls by visual rows.
+void cursor_scroll_view(view *v, int width, int height, int wrap);
+
+// Cursor cell relative to the first text cell of a scrolled view.
+void view_cursor_screen(const view *v, int width, int wrap, int *x, int *y);
 
 // Take the current column as the target for later vertical movement. Call it
-// after any edit that moves the cursor sideways.
+// after any edit that moves the cursor sideways. With word wrap the column is
+// counted from the start of the cursor's visual row.
 void cursor_mark_column(editor *e);
 
 // Update the scroll offsets so the cursor stays visible.

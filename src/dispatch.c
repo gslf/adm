@@ -9,22 +9,22 @@
 #include "undo.h"
 #include "lsp.h"
 #include "plugins.h"
+#include "terminal.h"
 
 #include <stdio.h>
 
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <io.h>
-#define READ _read
-#else
-#include <unistd.h>
-#define READ read
-#endif
-
 #define KEY_SLOTS 272 // ASCII/control, 16 special keys, 128 Meta characters
 #define MAX_MODULES 16
+
+// A terminal writes every byte of one key at once, so the rest of an escape
+// sequence is normally already buffered. This only covers a split delivery.
+#define ESCAPE_SEQUENCE_MS 10
+// Esc pressed on its own acts at once; a Meta key typed within this window
+// still counts as Esc followed by that key, i.e. as the Meta combination.
+#define ESCAPE_PREFIX_MS 100
 
 static command cmds[KEY_SLOTS];
 static command_binding prefix_entries[KEY_SLOTS];
@@ -84,6 +84,14 @@ static void cmd_save(editor *e) {
       git_panel_refresh(e);
   } else
     snprintf(e->notice, sizeof e->notice, "Save failed; buffer still unsaved");
+}
+
+// Command - WORD WRAP, shared by every split and tab
+static void cmd_wrap(editor *e) {
+  e->wrap_enabled = !e->wrap_enabled;
+  cursor_mark_column(e); // the sticky column is counted per visual row
+  snprintf(e->notice, sizeof e->notice, "Word wrap %s",
+           e->wrap_enabled ? "on" : "off");
 }
 
 // Remove the active selection, if there is one. Returns 1 if it removed
@@ -257,6 +265,7 @@ void dispatch_init(editor *e) {
   nprefix = 0;
   e->prefix_active = e->prefix_scroll = 0;
   e->move_active = e->help_active = e->help_scroll = 0;
+  e->wrap_enabled = 1;
   e->confirmation = NULL;
   e->confirmation_cancel = NULL;
   e->confirmation_prompt = NULL;
@@ -310,6 +319,7 @@ void dispatch_init(editor *e) {
   file_manager_bindings();
   git_panel_bindings();
   new_file_bindings();
+  dispatch_bind_prefix_global('w', cmd_wrap, "w", "Toggle word wrap");
   navigation_bindings();
 }
 
@@ -585,20 +595,26 @@ static char read_escape_params(char *par, int size) {
   int n = 0;
 
   for (;;) {
-    char c;
-    if (READ(0, &c, 1) != 1)
+    int c = term_read(ESCAPE_SEQUENCE_MS);
+    if (c < 0)
       return 0; // the terminal stopped mid sequence
+
+    // A control byte cannot belong to the sequence: it starts the next key.
+    if (c < 0x20) {
+      term_unread();
+      return 0;
+    }
 
     // Anything from '@' to '~' is the final byte and ends the sequence.
     if (c >= '@' && c <= '~') {
       par[n] = '\0';
-      return c;
+      return (char)c;
     }
 
     // Parameters too long for the buffer are dropped but still consumed, so
     // that the next read starts on a clean byte.
     if (n < size - 1)
-      par[n++] = c;
+      par[n++] = (char)c;
   }
 }
 
@@ -690,9 +706,16 @@ static int read_character(unsigned char b) {
 
   // Pull in the continuation bytes and return the code point.
   char seq[4] = {(char)b};
-  for (int i = 1; i < len; i++)
-    if (READ(0, &seq[i], 1) != 1)
+  for (int i = 1; i < len; i++) {
+    int c = term_read(ESCAPE_SEQUENCE_MS);
+    if (c < 0)
       return b; // truncated, keep the byte rather than dropping it
+    if ((c & 0xC0) != 0x80) {
+      term_unread(); // not a continuation: it starts the next key
+      return b;
+    }
+    seq[i] = (char)c;
+  }
 
   int cp;
   if (utf8_decode(seq, &cp) != len)
@@ -700,19 +723,43 @@ static int read_character(unsigned char b) {
   return cp;
 }
 
-int read_key(void) {
-  char c;
-  if (READ(0, &c, 1) != 1)
-    return KEY_NONE; // no input (timeout)
+// Whether Meta with this character does anything, so that Esc followed by it
+// can stand for the combination on terminals without a usable Alt key.
+static int meta_character(int c) {
+  return c == 'x' || c == 'c' || cmds[key_slot(META(c))];
+}
 
-  if (c != '\x1b')
+// When Esc last arrived on its own, for the Esc-then-key form of Meta.
+static int escape_alone;
+static unsigned long long escape_time;
+
+int read_key(void) {
+  int c = term_read(0);
+  if (c < 0)
+    return KEY_NONE; // no input
+  int after_escape = escape_alone;
+  escape_alone = 0;
+
+  if (c != '\x1b') {
+    if (after_escape && c >= 0x20 && c < 0x7f && meta_character(c) &&
+        term_milliseconds() - escape_time <= ESCAPE_PREFIX_MS)
+      return META(c);
     return read_character((unsigned char)c);
+  }
 
   // The key is an escape sequence: ESC, then the byte that introduces it,
   // then the parameters, then the final byte.
-  char introducer;
-  if (READ(0, &introducer, 1) != 1)
-    return '\x1b'; // ESC pressed on its own
+  int introducer = term_read(ESCAPE_SEQUENCE_MS);
+
+  // ESC pressed on its own. Another Esc or a Ctrl key right behind it is a
+  // key of its own, never lost inside an unbound Meta combination.
+  if (introducer < 0x20) {
+    if (introducer >= 0)
+      term_unread();
+    escape_alone = 1;
+    escape_time = term_milliseconds();
+    return '\x1b';
+  }
 
   // CSI ("\x1b[") or SS3 ("\x1bO"), which some terminals use for the home key
   if (introducer != '[' && introducer != 'O') {

@@ -1,6 +1,7 @@
 #include "cursor.h"
 #include "screen.h"
 #include "utf8.h"
+#include "wrap.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -11,6 +12,60 @@
 static int line_len(editor *e, int row) {
   char *l = buffer_line(&e->view->doc->buf, row);
   return l ? (int)strlen(l) : 0;
+}
+
+static const char *text(const buffer *b, int row) {
+  const char *line = buffer_line(b, row);
+  return line ? line : "";
+}
+
+// Width the active view wraps its lines at, or 0 when they scroll sideways.
+static int wrap_width(const editor *e) {
+  if (!e->wrap_enabled || !e->view->doc)
+    return 0;
+  int width = layout_content(e, e->view).width - screen_gutter(e->view);
+  return width > 0 ? width : 0;
+}
+
+// Move the visual row (*line, *row) by delta rows, stopping at the first and
+// last rows of the buffer.
+static void step_rows(const buffer *b, int width, int *line, int *row, int delta) {
+  while (delta > 0) {
+    int rows = wrap_rows(text(b, *line), width);
+    if (*row + delta < rows) {
+      *row += delta;
+      return;
+    }
+    if (*line >= b->nlines - 1) {
+      *row = rows - 1;
+      return;
+    }
+    delta -= rows - *row;
+    (*line)++;
+    *row = 0;
+  }
+  while (delta < 0) {
+    if (*row + delta >= 0) {
+      *row += delta;
+      return;
+    }
+    if (*line <= 0) {
+      *row = 0;
+      return;
+    }
+    delta += *row + 1;
+    (*line)--;
+    *row = wrap_rows(text(b, *line), width) - 1;
+  }
+}
+
+// Edits can shorten the top line below the rows already scrolled out of it.
+static void clamp_top(view *v, int width) {
+  int rows = wrap_rows(text(&v->doc->buf, v->rowoff), width);
+  if (v->wrapoff >= rows)
+    v->wrapoff = rows - 1;
+  if (v->wrapoff < 0)
+    v->wrapoff = 0;
 }
 
 int view_cursor_col(const view *v) {
@@ -25,7 +80,15 @@ int cursor_col(const editor *e) {
 }
 
 void cursor_mark_column(editor *e) {
-  e->view->sticky = cursor_col(e);
+  int width = wrap_width(e);
+  if (!width) {
+    e->view->sticky = cursor_col(e);
+    return;
+  }
+  const char *line = text(&e->view->doc->buf, e->view->cy);
+  int start;
+  wrap_row(line, width, e->view->cx, &start);
+  e->view->sticky = wrap_col(line, start, e->view->cx);
 }
 
 // Put the cursor on the sticky column of the current line, or at its end if
@@ -36,15 +99,40 @@ static void seek_column(editor *e) {
   e->view->cx = line ? utf8_byte_at_col(line, e->view->sticky) : 0;
 }
 
+// The wrapped counterpart: the sticky column of one visual row of the line.
+static void seek_row(editor *e, int width, int row) {
+  const char *line = text(&e->view->doc->buf, e->view->cy);
+  e->view->cx = wrap_byte(line, wrap_start(line, width, row), width,
+                          e->view->sticky);
+}
+
+// With word wrap, vertical moves go by visual rows, not by buffer lines.
+static void step_cursor(editor *e, int width, int delta) {
+  view *v = e->view;
+  int row = wrap_row(text(&v->doc->buf, v->cy), width, v->cx, NULL);
+  step_rows(&v->doc->buf, width, &v->cy, &row, delta);
+  seek_row(e, width, row);
+}
+
 // --- Raw movement, selection unaware ---
 
 static void move_up(editor *e) {
+  int width = wrap_width(e);
+  if (width) {
+    step_cursor(e, width, -1);
+    return;
+  }
   if (e->view->cy > 0)
     e->view->cy--;
   seek_column(e);
 }
 
 static void move_down(editor *e) {
+  int width = wrap_width(e);
+  if (width) {
+    step_cursor(e, width, 1);
+    return;
+  }
   if (e->view->cy < e->view->doc->buf.nlines - 1)
     e->view->cy++;
   seek_column(e);
@@ -81,7 +169,13 @@ static int page(const editor *e) {
 }
 
 static void move_page_up(editor *e) {
-  int n = page(e);
+  int n = page(e), width = wrap_width(e);
+  if (width) {
+    step_cursor(e, width, -n);
+    clamp_top(e->view, width);
+    step_rows(&e->view->doc->buf, width, &e->view->rowoff, &e->view->wrapoff, -n);
+    return;
+  }
   e->view->cy = e->view->cy > n ? e->view->cy - n : 0;
 
   // Scroll with the cursor so it keeps its place on the screen.
@@ -90,7 +184,13 @@ static void move_page_up(editor *e) {
 }
 
 static void move_page_down(editor *e) {
-  int n = page(e);
+  int n = page(e), width = wrap_width(e);
+  if (width) {
+    step_cursor(e, width, n);
+    clamp_top(e->view, width);
+    step_rows(&e->view->doc->buf, width, &e->view->rowoff, &e->view->wrapoff, n);
+    return;
+  }
   int last = e->view->doc->buf.nlines > 0 ? e->view->doc->buf.nlines - 1 : 0;
 
   e->view->cy += n;
@@ -129,6 +229,16 @@ static void move_file_end(editor *e) {
 // The last line of the file that is on the screen right now. The screen does
 // not move, only the cursor drops to the bottom of it, keeping its column.
 static void move_screen_bottom(editor *e) {
+  int width = wrap_width(e);
+  if (width) {
+    view *v = e->view;
+    clamp_top(v, width);
+    int row = v->wrapoff;
+    v->cy = v->rowoff;
+    step_rows(&v->doc->buf, width, &v->cy, &row, page(e) - 1);
+    seek_row(e, width, row);
+    return;
+  }
   int last = e->view->doc->buf.nlines > 0 ? e->view->doc->buf.nlines - 1 : 0;
   int bottom = e->view->rowoff + page(e) - 1;
   e->view->cy = bottom < last ? bottom : last;
@@ -295,9 +405,36 @@ void cursor_file_start(editor *e) { do_move(e, move_file_start); }
 void cursor_file_end(editor *e)   { do_move(e, move_file_end); }
 void cursor_screen_bottom(editor *e) { do_move(e, move_screen_bottom); }
 
-void cursor_scroll_view(view *v, int width, int height) {
+// Keep the cursor row inside the area, scrolling by visual rows.
+static void scroll_wrapped(view *v, int width, int height) {
+  const buffer *b = &v->doc->buf;
+  int row = wrap_row(text(b, v->cy), width, v->cx, NULL);
+  v->coloff = 0;
+  clamp_top(v, width);
+  if (v->cy < v->rowoff || (v->cy == v->rowoff && row < v->wrapoff)) {
+    v->rowoff = v->cy;
+    v->wrapoff = row;
+    return;
+  }
+  // Count rows down to the cursor, stopping once it is known to be below.
+  int distance = row - v->wrapoff;
+  for (int line = v->rowoff; line < v->cy && distance < height; line++)
+    distance += wrap_rows(text(b, line), width);
+  if (distance >= height) {
+    v->rowoff = v->cy;
+    v->wrapoff = row;
+    step_rows(b, width, &v->rowoff, &v->wrapoff, 1 - height);
+  }
+}
+
+void cursor_scroll_view(view *v, int width, int height, int wrap) {
   int th = height > 0 ? height : 1;
   int tw = width > 0 ? width : 1;
+  if (wrap && v->doc) {
+    scroll_wrapped(v, tw, th);
+    return;
+  }
+  v->wrapoff = 0;
   if (v->cy < v->rowoff)
     v->rowoff = v->cy;
   if (v->cy >= v->rowoff + th)
@@ -309,7 +446,23 @@ void cursor_scroll_view(view *v, int width, int height) {
     v->coloff = col - tw + 1;
 }
 
+void view_cursor_screen(const view *v, int width, int wrap, int *x, int *y) {
+  if (!wrap || !v->doc || width < 1) {
+    *x = view_cursor_col(v) - v->coloff;
+    *y = v->cy - v->rowoff;
+    return;
+  }
+  const buffer *b = &v->doc->buf;
+  const char *line = text(b, v->cy);
+  int start, row = wrap_row(line, width, v->cx, &start);
+  *x = wrap_col(line, start, v->cx);
+  *y = row - v->wrapoff;
+  for (int r = v->rowoff; r < v->cy; r++)
+    *y += wrap_rows(text(b, r), width);
+}
+
 void cursor_scroll(editor *e) {
   rect area = layout_content(e, e->view);
-  cursor_scroll_view(e->view, area.width - screen_gutter(e->view), area.height);
+  int width = area.width - screen_gutter(e->view);
+  cursor_scroll_view(e->view, width, area.height, e->wrap_enabled && width > 0);
 }

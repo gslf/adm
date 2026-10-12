@@ -64,6 +64,7 @@ static const char *help_lines[] = {
   "C-x d      Delete selected Explorer file (confirmation)",
   "C-x g      Open Git Manager with focus",
   "C-x l      Go to Line",
+  "C-x w      Toggle word wrap (on by default)",
   "C-s / C-x s  Search current file; C-x S searches workspace",
   "C-x r / R  Search and replace in file / workspace",
   "Tab        Toggle TEXT / REGEX while entering a query",

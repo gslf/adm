@@ -15,7 +15,9 @@ typedef struct view {
   int cx, cy;
   int selx, sely, sel_active, sel_mode;
   int sticky;
-  int rowoff, coloff;
+  // With word wrap, wrapoff rows of line rowoff sit above the area and sticky
+  // is a column inside the cursor's row; coloff only scrolls unwrapped text.
+  int rowoff, coloff, wrapoff;
   rect area;
 } view;
 

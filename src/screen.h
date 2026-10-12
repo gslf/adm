@@ -6,7 +6,7 @@
 // Append buffer: accumulates all output and writes it in a single write().
 typedef struct abuf {
   char *b;
-  int len;
+  int len, cap;
 } abuf;
 
 void ab_append(abuf *ab, const char *s, int len);
@@ -22,6 +22,10 @@ int screen_gutter(const view *v);
 
 // Render the whole screen, emitting synchronized output only when it changes.
 void screen_refresh(editor *e);
+
+// Forget what the terminal shows, so the next refresh repaints every cell:
+// after a resize, or when something else may have written to the terminal.
+void screen_invalidate(void);
 
 // Clear the screen (used on exit).
 void screen_clear(void);

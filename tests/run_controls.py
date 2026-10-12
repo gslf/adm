@@ -98,7 +98,7 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
         flags.append("-pthread")
     link_flags = shlex.split(os.environ.get("LDLIBS", "-ldl" if sys.platform.startswith("linux") else ""))
     os.environ["ADM_CONFIG"] = str(Path(directory) / "no-user-config")
-    suites = ("config", "plugins", "languages", "lsp", "lsp_edits", "pattern", "search", "undo", "controls", "navigation", "modal", "splits", "tabs", "empty_views", "large_files", "lifecycle", "file_manager", "file_operations", "screen", "process", "diff", "git", "git_initial")
+    suites = ("config", "plugins", "languages", "lsp", "lsp_edits", "pattern", "search", "undo", "controls", "navigation", "modal", "splits", "tabs", "empty_views", "large_files", "lifecycle", "file_manager", "file_operations", "screen", "process", "diff", "git", "git_initial", "wrap", "frame")
     if os.name == "nt":
         suites += ("terminal_mode",)
     else:
@@ -204,7 +204,7 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
                 working_directory, "log", "--all", "--format=%s")
         print(f"{suite.capitalize()} regressions passed.")
     if os.name == "posix" and not arguments.suite:
-        from terminal import run, run_empty, run_file_manager, run_file_operations, run_git, run_search, run_modal, run_undo, run_lsp, run_exit_drain
+        from terminal import run, run_empty, run_file_manager, run_file_operations, run_git, run_search, run_modal, run_undo, run_lsp, run_exit_drain, run_wrap, run_escape
         run_exit_drain()
         binary = Path(directory) / "adm"
         subprocess.run(compiler + flags + ["-o", str(binary), str(root / "src" / "main.c")]
@@ -220,6 +220,8 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
         run_search(binary)
         run_modal(binary)
         run_empty(binary)
+        run_wrap(binary)
+        run_escape(binary)
         run_file_manager(binary)
         run_file_operations(binary)
         run_git(binary, git_fixture)

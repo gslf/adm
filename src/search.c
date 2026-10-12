@@ -24,7 +24,7 @@ struct search_state {
   int active, goto_mode, workspace, replacing, regex, phase, valid;
   char query[PATTERN_MAX], replacement[PATTERN_MAX], confirmation[160];
   int length, replacement_length, input_cursor;
-  int oy, ox, orowoff, ocoloff, osticky;
+  int oy, ox, orowoff, ocoloff, owrapoff, osticky;
   view *origin;
   unsigned long revision;
   search_pattern pattern;
@@ -49,6 +49,7 @@ static void restore(editor *e) {
   e->view->cx = s->ox;
   e->view->rowoff = s->orowoff;
   e->view->coloff = s->ocoloff;
+  e->view->wrapoff = s->owrapoff;
   e->view->sticky = s->osticky;
   selection_clear(e);
 }
@@ -128,6 +129,7 @@ static void open_prompt(editor *e, int workspace, int replacing,
   s->ox = e->view->cx;
   s->orowoff = e->view->rowoff;
   s->ocoloff = e->view->coloff;
+  s->owrapoff = e->view->wrapoff;
   s->osticky = e->view->sticky;
   selection_clear(e);
   if (workspace)

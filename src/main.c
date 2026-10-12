@@ -45,6 +45,7 @@ int main(int argc, char *argv[]) {
   // Main loop
   while (e.running) {
     if (term_resized()) {
+      screen_invalidate(); // the terminal may have reflowed or cleared it
       termsize s = get_size();
       if (s.rows > 0) {
         e.rows = s.rows;

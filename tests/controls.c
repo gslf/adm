@@ -11,6 +11,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <time.h>
 #include <unistd.h>
 
 static void test_reader(void) {
@@ -18,7 +19,8 @@ static void test_reader(void) {
   int original = dup(0);
   assert(original >= 0 && pipe(fds) == 0);
   const char input[] = "\0\x1b" "b\x1b" "f\x1b<v\x1b[1;5C"
-                       "\x1b[H\xc3\xa8\x1b\xc3\xa8x\x1b";
+                       "\x1b[H\xc3\xa8\x1b\xc3\xa8x"
+                       "\x1b\x1b[B\x1b\x18\x1b\x07x\x1b\x1bx\x1b[\x1b[A\x1b";
   assert(write(fds[1], input, sizeof input - 1) == sizeof input - 1);
   close(fds[1]);
   assert(dup2(fds[0], 0) == 0);
@@ -33,7 +35,48 @@ static void test_reader(void) {
   assert(read_key() == 0xe8);
   assert(read_key() == KEY_UNKNOWN); // Unsupported Meta UTF-8 is fully consumed.
   assert(read_key() == 'x');
+  // Esc and Ctrl keys right after Esc are never lost in a Meta combination.
   assert(read_key() == '\x1b');
+  assert(read_key() == KEY_DOWN);
+  assert(read_key() == '\x1b');
+  assert(read_key() == CTRL('x'));
+  assert(read_key() == '\x1b');
+  assert(read_key() == CTRL('g'));
+  assert(read_key() == 'x');
+  assert(read_key() == '\x1b');
+  assert(read_key() == META('x'));
+  assert(read_key() == '\x1b'); // a sequence cut short by the next key
+  assert(read_key() == KEY_UP);
+  assert(read_key() == '\x1b');
+  assert(read_key() == KEY_NONE);
+  assert(dup2(original, 0) == 0);
+  close(original);
+}
+
+static void test_escape_prefix(void) {
+  int fds[2];
+  int original = dup(0);
+  assert(original >= 0 && pipe(fds) == 0);
+  assert(dup2(fds[0], 0) == 0);
+  close(fds[0]);
+  // A lone Esc acts at once; x typed right after it still means M-x.
+  assert(write(fds[1], "\x1b", 1) == 1);
+  assert(read_key() == '\x1b');
+  assert(write(fds[1], "xx", 2) == 2);
+  assert(read_key() == META('x'));
+  assert(read_key() == 'x');
+  // A key without a Meta command, or one typed later, is the plain key.
+  assert(write(fds[1], "\x1b", 1) == 1);
+  assert(read_key() == '\x1b');
+  assert(write(fds[1], "a", 1) == 1);
+  assert(read_key() == 'a');
+  assert(write(fds[1], "\x1b", 1) == 1);
+  assert(read_key() == '\x1b');
+  struct timespec later = {0, 150000000};
+  nanosleep(&later, NULL);
+  assert(write(fds[1], "x", 1) == 1);
+  assert(read_key() == 'x');
+  close(fds[1]);
   assert(read_key() == KEY_NONE);
   assert(dup2(original, 0) == 0);
   close(original);
@@ -60,6 +103,7 @@ int main(int argc, char **argv) {
   assert(argc == 2);
 #ifndef _WIN32
   test_reader();
+  test_escape_prefix();
 #endif
   editor e = {.document.filename = argv[1], .rows = 24, .cols = 80, .running = 1};
   buffer_init(&e.document.buf);

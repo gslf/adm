@@ -28,6 +28,7 @@ C-x n      Rename selected Explorer file
 C-x d      Delete selected Explorer file (confirmation)
 C-x g      Open Git Manager with focus
 C-x l      Go to Line
+C-x w      Toggle word wrap (on by default)
 C-s / C-x s  Search current file; C-x S searches workspace
 C-x r / R  Search and replace in file / workspace
 Tab        Toggle TEXT / REGEX while entering a query
@@ -92,6 +93,7 @@ buffers for files already changed.
 | C-g / Esc | Cancel selection or prompt; return from sidebar to editor |
 | C-x C-s / C-x C-c | Save current buffer / quit |
 | C-x l | Go to Line |
+| C-x w | Toggle word wrap (on by default) |
 | C-q / C-x q | New empty split above-below |
 | C-u / C-x u | New empty split side by side |
 | C-x m | Enter MOVE mode until Esc |
@@ -126,6 +128,16 @@ MOVE. They replace the previous Emacs cursor/backspace shortcuts; arrows and
 Backspace retain those editing functions. Enter inserts a newline; `C-j` moves
 between splits. Search, Go to Line, filename and Git text-entry prompts retain
 ownership of their input keys. `C-x ?` opens scrollable navigation help.
+
+Word wrap is on by default and `C-x w` toggles it for every split and tab.
+Long lines break after the blanks between words, and a word wider than the
+split breaks between characters. The last column of a wrapped row is kept for
+a trailing blank or the cursor at the end of the line. Line numbers still
+count buffer lines: a wrapped line shows its number on the first row only and
+leaves the gutter blank on its continuation rows, while the bottom bar,
+Go to Line and search keep reporting buffer lines. Up/Down, page keys and
+`C-v`/`M-v` move by visual rows; `C-a`/`C-e` still go to the start and end of
+the whole line. With word wrap off, long lines scroll sideways instead.
 
 Quick creation uses ordinary Ctrl keys: `C-q` for an above-below split,
 `C-u` for a side-by-side split, and `C-t` for a tab. The Command Center uses the
