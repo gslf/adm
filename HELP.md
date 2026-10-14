@@ -156,6 +156,11 @@ Starting adm without a filename shows the empty welcome split and focuses the
 File Explorer. A missing filename supplied as an argument starts an empty
 document that is created on save.
 
+The workspace is the directory where adm was launched. Passing a directory
+instead of a file, such as `adm /usr/bin`, opens that directory as the workspace:
+adm starts with the empty welcome split and the File Explorer rooted there, and
+the Git Manager, workspace search, language servers and `C-x N` use it too.
+
 Each tab holds up to four splits with its own split layout, focused split, cursors,
 selections, and scroll positions. New tabs and new splits start empty, with
 no document or buffer attached. They display the centered adm logo and focus the
@@ -212,7 +217,7 @@ files directly and is not covered by buffer undo.
 In an empty split, press `C-x N`, enter a name, and press Enter to create and open
 an empty file. Esc or `C-g` cancels and returns focus to the File Explorer. Simple
 names use the selected Explorer folder, or the selected file's parent folder;
-the initial selection is the directory where adm was launched. Names containing
+the initial selection is the workspace directory. Names containing
 directory separators must be absolute paths and ignore the Explorer selection.
 The parent directory must already exist. Existing files are never overwritten;
 errors keep the name prompt open so it can be corrected.
@@ -231,7 +236,7 @@ the same commands resize the selected split. The chosen sidebar width is shared
 between both modes and retained when reopening it or resizing the terminal;
 its displayed width is clamped to leave space for the editor.
 
-In the **File Explorer** the tree starts in the directory where adm was launched. Use arrows to navigate, expand and collapse folders. Enter toggles folders, opening a file with Enter targets the selected split and returns focus to the editor.
+In the **File Explorer** the tree starts in the workspace directory. Use arrows to navigate, expand and collapse folders. Enter toggles folders, opening a file with Enter targets the selected split and returns focus to the editor.
 
 With the Explorer focused and a file selected, the **C-x** command menu shows
 **n — Rename selected file** and **d — Delete selected file**.
@@ -250,7 +255,7 @@ In the **Git Manager**, Enter opens the selected staged or unstaged diff in the 
 
 ## Search and replace
 
-The workspace is fixed to the directory where adm started, even when you open
+The workspace is fixed to the directory chosen at startup, even when you open
 files outside it or navigate into Explorer subdirectories. `C-s` or `C-x s`
 searches the current in-memory buffer, including unsaved edits. `C-x S` searches
 saved text files recursively in that workspace. Searches are case sensitive.
@@ -382,7 +387,7 @@ Servers are started on demand with `M-x s`. Automatic startup is initially off;
 `M-x a` enables it for this editor session. Stopping a server suppresses automatic
 restart until it is explicitly started, restarted, or automatic startup is
 re-enabled. C and C++ share one clangd session. The workspace root is always the
-folder from which adm was launched, regardless of the File Explorer's location.
+workspace directory chosen at startup, regardless of the File Explorer's location.
 
 Install the appropriate server separately and make its executable available on
 `PATH`, or set the corresponding environment variable to its executable path:

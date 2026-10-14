@@ -57,12 +57,10 @@ static void refresh(editor *e) {
   if (panel->action != GIT_IDLE)
     return;
   if (!panel->repo.root) {
-    char *cwd = path_current_directory();
     const char *args[] = {"rev-parse", "--show-toplevel", NULL};
-    if (cwd) {
-      start(e, GIT_DISCOVER, cwd, args);
-      free(cwd);
-    } else
+    if (e->files.workspace_root)
+      start(e, GIT_DISCOVER, e->files.workspace_root, args);
+    else
       message(panel, 1, "Cannot find current directory");
   } else {
     const char *args[] = {"status", "--porcelain=v1", "-z", "--branch",

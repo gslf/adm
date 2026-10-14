@@ -342,6 +342,47 @@ def run_empty(binary):
     print("Empty-view terminal regressions passed.")
 
 
+def run_directory(binary):
+    with tempfile.TemporaryDirectory(prefix="adm-directory-terminal-") as directory:
+        root = Path(directory)
+        project = root / "project"
+        (project / "folder").mkdir(parents=True)
+        (project / "inside.txt").write_text("inside\n")
+        (root / "outside.txt").write_text("outside\n")
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
+        # A directory argument opens it as the workspace, not as a file to edit.
+        process = subprocess.Popen([str(binary), "project"], cwd=root,
+                                   stdin=slave, stdout=slave, stderr=slave)
+        os.close(slave)
+        terminal = Terminal(24, 100)
+
+        def update(keys=b""):
+            if keys:
+                os.write(master, keys)
+            terminal.feed(read_frame(master))
+            return "\n".join(terminal.lines())
+
+        try:
+            opened = update()
+            assert process.poll() is None and "LOAD ERROR" not in opened
+            assert " FILES *" in opened and "[Empty]" in opened
+            assert "inside.txt" in opened and "folder" in opened
+            assert "outside.txt" not in opened
+            # New files default to the opened directory, not the launch directory.
+            created = update(b"\x18Nmade.txt\r")
+            assert "made.txt" in created and " FILES *" not in created
+            assert (project / "made.txt").exists() and not (root / "made.txt").exists()
+            update(b"\x18\x03")
+            wait_exit(process, master)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            os.close(master)
+    print("Directory-argument terminal regressions passed.")
+
+
 
 def run_wrap(binary):
     with tempfile.TemporaryDirectory(prefix="adm-wrap-terminal-") as directory:

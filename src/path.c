@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
 #include <windows.h>
@@ -98,6 +99,17 @@ char *path_current_directory(void) {
   return resolved;
 #else
   return getcwd(NULL, 0);
+#endif
+}
+
+int path_is_directory(const char *path) {
+  struct stat info;
+  if (!path || stat(path, &info) < 0)
+    return 0;
+#ifdef _WIN32
+  return (info.st_mode & _S_IFMT) == _S_IFDIR;
+#else
+  return S_ISDIR(info.st_mode);
 #endif
 }
 

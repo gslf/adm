@@ -9,7 +9,9 @@
 #include <string.h>
 
 void file_manager_init(editor *e) {
-  e->files = (file_manager){.workspace_root = path_current_directory()};
+  // A root chosen at startup (a directory argument) takes over the current directory.
+  char *root = e->files.workspace_root;
+  e->files = (file_manager){.workspace_root = root ? root : path_current_directory()};
 }
 
 void file_manager_shutdown(editor *e) {

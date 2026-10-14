@@ -23,13 +23,15 @@ static char *directory(editor *e) {
   if (e->sidebar.kind != SIDEBAR_FILES)
     sidebar_show(e, SIDEBAR_FILES);
   const tree_entry *entry = file_tree_selected(&e->files.tree);
-  if (!entry)
-    return path_current_directory();
-  size_t length = entry->directory ? strlen(entry->path) :
-                  (size_t)(path_name(entry->path) - entry->path);
+  const char *root = e->files.workspace_root;
+  if (!entry && !root)
+    return NULL;
+  const char *source = entry ? entry->path : root;
+  size_t length = !entry || entry->directory ? strlen(source) :
+                  (size_t)(path_name(source) - source);
   char *result = malloc(length + 1);
   if (result) {
-    memcpy(result, entry->path, length);
+    memcpy(result, source, length);
     result[length] = '\0';
   }
   return result;

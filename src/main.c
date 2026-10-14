@@ -11,11 +11,21 @@
 
 int main(int argc, char *argv[]) {
   editor e = {0};
-  e.document.filename = (argc > 1) ? argv[1] : NULL;
-  char *filename = argc > 1 ? path_absolute(argv[1]) : NULL;
-  if (filename) {
-    e.document.filename = filename;
-    e.document.owns_filename = 1;
+  char *filename = NULL;
+  if (argc > 1 && path_is_directory(argv[1])) {
+    // A directory argument becomes the workspace root and opens no document.
+    e.files.workspace_root = path_absolute(argv[1]);
+    if (!e.files.workspace_root) {
+      fprintf(stderr, "DIRECTORY OPEN ERROR: %s\n", argv[1]);
+      return 1;
+    }
+  } else if (argc > 1) {
+    e.document.filename = argv[1];
+    filename = path_absolute(argv[1]);
+    if (filename) {
+      e.document.filename = filename;
+      e.document.owns_filename = 1;
+    }
   }
 
   // Buffer loading
@@ -31,6 +41,7 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "TERMINAL INITIALIZATION ERROR\n");
     buffer_free(&e.document.buf);
     free(filename);
+    free(e.files.workspace_root);
     return 1;
   }
   termsize ts = get_size();

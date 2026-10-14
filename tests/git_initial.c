@@ -1,5 +1,6 @@
 #include "dispatch.h"
 #include "fileio.h"
+#include "path.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -80,6 +81,8 @@ int main(int argc, char **argv) {
   assert(!e.git.failed && !e.git.repo.unborn && !e.git.repo.count);
   dispatch_shutdown(&e);
 
+  char *repository = path_current_directory();
+  assert(repository);
   assert(CHANGE_DIRECTORY("..") == 0);
   editor outside = {.rows = 24, .cols = 100, .running = 1};
   buffer_init(&outside.document.buf);
@@ -95,5 +98,18 @@ int main(int argc, char **argv) {
   prefix(&outside, 'f');
   assert(outside.sidebar.kind == SIDEBAR_FILES && file_manager_area(&outside).width > 0);
   dispatch_shutdown(&outside);
+
+  // A startup workspace root (adm <directory>) drives the tree and Git, not the cwd.
+  editor chosen = {.rows = 24, .cols = 100, .running = 1};
+  buffer_init(&chosen.document.buf);
+  chosen.files.workspace_root = repository;
+  dispatch_init(&chosen);
+  assert(!chosen.view->doc && chosen.files.workspace_root == repository);
+  assert(chosen.sidebar.kind == SIDEBAR_FILES && chosen.files.tree.count);
+  assert(!strcmp(chosen.files.tree.entries[0].path, repository));
+  prefix(&chosen, 'g');
+  settle(&chosen);
+  assert(!chosen.git.failed && chosen.git.repo.root && !chosen.git.repo.count);
+  dispatch_shutdown(&chosen);
   return 0;
 }

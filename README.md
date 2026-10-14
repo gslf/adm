@@ -19,7 +19,7 @@ An opinionated, batteries-included text editor. It supports themes and plugins, 
 
 ```sh
 make
-./adm [file]
+./adm [file | directory]
 make test
 ```
 

@@ -204,7 +204,7 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
                 working_directory, "log", "--all", "--format=%s")
         print(f"{suite.capitalize()} regressions passed.")
     if os.name == "posix" and not arguments.suite:
-        from terminal import run, run_empty, run_file_manager, run_file_operations, run_git, run_search, run_modal, run_undo, run_lsp, run_exit_drain, run_wrap, run_escape
+        from terminal import run, run_empty, run_directory, run_file_manager, run_file_operations, run_git, run_search, run_modal, run_undo, run_lsp, run_exit_drain, run_wrap, run_escape
         run_exit_drain()
         binary = Path(directory) / "adm"
         subprocess.run(compiler + flags + ["-o", str(binary), str(root / "src" / "main.c")]
@@ -220,6 +220,7 @@ with tempfile.TemporaryDirectory(prefix="adm-controls-") as directory:
         run_search(binary)
         run_modal(binary)
         run_empty(binary)
+        run_directory(binary)
         run_wrap(binary)
         run_escape(binary)
         run_file_manager(binary)
