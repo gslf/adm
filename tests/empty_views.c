@@ -71,7 +71,7 @@ int main(int argc, char **argv) {
   assert(!e.view->doc && !e.document.views && !e.document.buf.head);
   assert(e.sidebar.kind == SIDEBAR_FILES && e.sidebar.focused);
   assert(e.files.tree.entries[0].directory && e.view->used);
-  assert(dispatch_prefix_find(&e, 'N'));
+  assert(dispatch_prefix_find(&e, 'N') && !dispatch_prefix_find(&e, ' '));
   abuf ab = {0};
   screen_empty(&ab, (rect){0, 0, 100, 20});
   ab_append(&ab, "\0", 1);
@@ -162,7 +162,7 @@ int main(int argc, char **argv) {
   assert(!e.new_file.active && e.view->doc && !e.sidebar.focused);
   assert(!e.view->doc->dirty && stat(created, &info) == 0 && info.st_size == 0);
   assert(!strcmp(e.view->doc->filename, created));
-  assert(!dispatch_prefix_find(&e, 'N'));
+  assert(!dispatch_prefix_find(&e, 'N') && dispatch_prefix_find(&e, ' '));
   dispatch_key(&e, 'Q');
   document *shared = e.view->doc;
   assert(shared->dirty && shared->views == 1);

@@ -94,6 +94,9 @@ static void cmd_wrap(editor *e) {
            e->wrap_enabled ? "on" : "off");
 }
 
+// Selection needs text to cover, so an empty split leaves it out of the menu.
+static int has_document(const editor *e) { return e->view->doc != NULL; }
+
 // Remove the active selection, if there is one. Returns 1 if it removed
 // something, so callers can tell an erasing keystroke is already done.
 static int drop_selection(editor *e) {
@@ -253,6 +256,24 @@ const command_binding *dispatch_prefix_find(const editor *e, int key) {
   return NULL;
 }
 
+const command_binding *dispatch_prefix_entry(int index) {
+  for (int i = 0; i < nprefix; i++)
+    if (prefix_entries[i].cmd && index-- == 0)
+      return &prefix_entries[i];
+  return NULL;
+}
+
+const command_binding *dispatch_prefix_lookup(int key) {
+  for (int i = 0; i < nprefix; i++)
+    if (prefix_entries[i].key == key && prefix_entries[i].cmd)
+      return &prefix_entries[i];
+  return NULL;
+}
+
+int dispatch_prefix_available(const editor *e, const command_binding *binding) {
+  return binding && binding_visible(binding, e);
+}
+
 void dispatch_register(module *m) {
   for (int i = 0; i < nmods; i++)
     if (mods[i] == m) return;
@@ -304,6 +325,8 @@ void dispatch_init(editor *e) {
   dispatch_bind(CTRL('g'), selection_clear);
   dispatch_bind('\x1b', selection_clear);
 
+  dispatch_bind_prefix_when(' ', cursor_select_toggle, "SPC",
+                            "Selection mode", has_document);
   dispatch_bind_prefix(CTRL('s'), cmd_save, "C-s", "Save");
   dispatch_bind_prefix(CTRL('c'), cmd_quit, "C-c", "Quit");
 
@@ -319,7 +342,7 @@ void dispatch_init(editor *e) {
   file_manager_bindings();
   git_panel_bindings();
   new_file_bindings();
-  dispatch_bind_prefix_global('w', cmd_wrap, "w", "Toggle word wrap");
+  dispatch_bind_prefix_global('w', cmd_wrap, "w", "Word wrap");
   navigation_bindings();
 }
 
@@ -450,8 +473,15 @@ static void dispatch_key_impl(editor *e, int key) {
       if (!binding->preserve_focus)
         e->sidebar.focused = 0;
       cmd(e);
-    } else if (key != CTRL('g') && key != '\x1b')
-      e->prefix_active = 1; // unknown suffix: keep valid choices visible
+    } else if (key != CTRL('g') && key != '\x1b') {
+      // Unknown or dimmed suffix: keep the choices visible, and say why a
+      // dimmed one did nothing.
+      const command_binding *dimmed = dispatch_prefix_lookup(key);
+      if (dimmed)
+        snprintf(e->notice, sizeof e->notice, "%s: not available here",
+                 dimmed->label);
+      e->prefix_active = 1;
+    }
     return;
   }
 

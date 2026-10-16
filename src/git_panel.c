@@ -506,5 +506,5 @@ void git_panel_key(editor *e, int key) {
 }
 
 void git_panel_bindings(void) {
-  dispatch_bind_prefix_global('g', open_panel, "g", "Open Git Manager");
+  dispatch_bind_prefix_global('g', open_panel, "g", "Git Manager");
 }

@@ -823,12 +823,12 @@ void search_status(editor *e, unsigned long long *matches, int *done) {
 static void init(editor *e) {
   e->search = calloc(1, sizeof *e->search);
   dispatch_bind(CTRL('s'), search_begin);
-  dispatch_bind_prefix('s', search_begin, "s", "Search current file");
+  dispatch_bind_prefix('s', search_begin, "s", "Search file");
   dispatch_bind_prefix_global('S', workspace_begin, "S", "Search workspace");
-  dispatch_bind_prefix('r', replace_begin, "r", "Search and replace in file");
+  dispatch_bind_prefix('r', replace_begin, "r", "Replace in file");
   dispatch_bind_prefix_global('R', workspace_replace_begin, "R",
-                              "Search and replace in workspace");
-  dispatch_bind_prefix('l', goto_begin, "l", "Go to Line");
+                              "Replace in workspace");
+  dispatch_bind_prefix('l', goto_begin, "l", "Go to line");
 }
 static void search_shutdown(editor *e) {
   if (e->search) {

@@ -78,6 +78,11 @@ void dispatch_pair_prefix(int first_key, int second_key, const char *label);
 int dispatch_prefix_count(const editor *e);
 const command_binding *dispatch_prefix_at(const editor *e, int index);
 const command_binding *dispatch_prefix_find(const editor *e, int key);
+// Every bound suffix in registration order, whether it can run now or not;
+// NULL past the end. The Command Center shows the unavailable ones dimmed.
+const command_binding *dispatch_prefix_entry(int index);
+const command_binding *dispatch_prefix_lookup(int key);
+int dispatch_prefix_available(const editor *e, const command_binding *binding);
 void dispatch_direct_bindings(command cmd, char *keys, size_t size);
 void dispatch_register(module *m);         // register a module
 void dispatch_init(editor *e);             // set up default bindings, init modules

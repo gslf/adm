@@ -150,8 +150,8 @@ static void new_tab(editor *e) { tabs_new(e); }
 
 void tabs_bindings(void) {
   dispatch_bind(CTRL('t'), new_tab);
-  dispatch_bind_prefix('t', new_tab, "t", "New empty tab");
-  dispatch_bind_prefix('k', tabs_close, "k", "Close current tab");
+  dispatch_bind_prefix('t', new_tab, "t", "New tab");
+  dispatch_bind_prefix('k', tabs_close, "k", "Close tab");
 }
 
 void tabs_draw(const editor *e, abuf *ab, int width) {

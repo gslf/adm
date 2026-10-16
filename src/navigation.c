@@ -3,6 +3,8 @@
 #include "dispatch.h"
 #include "screen.h"
 
+#include <string.h>
+
 static void left(editor *e) { layout_move(e, -1, 0); }
 static void down(editor *e) { layout_move(e, 0, 1); }
 static void up(editor *e) { layout_move(e, 0, -1); }
@@ -35,7 +37,7 @@ int navigation_quick_key(int key) {
 
 void navigation_bindings(void) {
   dispatch_bind_prefix_global('m', move, "m", "Move between splits");
-  dispatch_bind_prefix_global('?', help, "?", "Navigation help");
+  dispatch_bind_prefix_global('?', help, "?", "Help");
   const char *keys = "hjklbnp";
   for (; *keys; keys++)
     dispatch_bind(CTRL(*keys), movement(*keys));
@@ -80,6 +82,8 @@ static const char *help_lines[] = {
   "C-x c      Close current split",
   "C-x k      Close current tab and all its splits",
   "Unsaved last references require confirmation before closing.",
+  "C-SPC      Toggle selection mode (also C-x SPC)",
+  "M-w / C-w / C-y  Copy / cut / paste the selection",
   "C-z / M-z  Undo / redo (also C-x z / C-x Z)",
   "C-x C-s    Save; C-x C-c quits",
   "Quick tab/split creation also works in MOVE.",
@@ -100,7 +104,14 @@ static const char *help_lines[] = {
 };
 #define HELP_COUNT ((int)(sizeof help_lines / sizeof help_lines[0]))
 
-static int help_capacity(const editor *e) { return e->rows > 4 ? e->rows - 4 : 1; }
+// Blank space between the help text and the edges of its box.
+#define HELP_PAD_X 3
+#define HELP_PAD_Y 1
+
+static int help_capacity(const editor *e) {
+  int rows = e->rows - 4 - 2 * HELP_PAD_Y;
+  return rows > 0 ? rows : 1;
+}
 static void help_clamp(editor *e) {
   int limit = HELP_COUNT - help_capacity(e);
   if (limit < 0) limit = 0;
@@ -130,17 +141,33 @@ int navigation_modal_key(editor *e, int key) {
   return 1;
 }
 
+// The box fits the widest line plus its padding, which shrinks to a single
+// column on terminals too narrow for the whole of it.
 void navigation_draw(editor *e, abuf *ab) {
   if (!e->help_active || e->cols < 1 || e->rows < 3) return;
   help_clamp(e);
-  int height = help_capacity(e);
-  if (height > HELP_COUNT) height = HELP_COUNT;
-  int width = e->cols < 80 ? e->cols : 80;
+  int lines = help_capacity(e);
+  if (lines > HELP_COUNT) lines = HELP_COUNT;
+  int text = 0;
+  for (int i = 0; i < HELP_COUNT; i++)
+    if ((int)strlen(help_lines[i]) > text) text = (int)strlen(help_lines[i]);
+  int pad = (e->cols - text) / 2;
+  if (pad > HELP_PAD_X) pad = HELP_PAD_X;
+  if (pad < 1) pad = e->cols > 2 ? 1 : 0;
+  int width = text + 2 * pad;
+  if (width > e->cols) width = e->cols;
+  int height = lines + 2 * HELP_PAD_Y;
+  if (height > e->rows - 2) height = e->rows - 2;
   int x = (e->cols - width) / 2, y = (e->rows - 2 - height) / 2 + 1;
   for (int i = 0; i < height; i++) {
     screen_position(ab, x, y + i);
     theme_append(ab, THEME_ACTIVE);
-    int used = screen_text(ab, help_lines[e->help_scroll + i], width);
+    int line = i - HELP_PAD_Y, used = 0;
+    if (line >= 0 && line < lines) {
+      used = pad < width ? pad : width;
+      screen_repeat(ab, ' ', used);
+      used += screen_text(ab, help_lines[e->help_scroll + line], width - used);
+    }
     screen_repeat(ab, ' ', width - used);
     theme_append(ab, THEME_NORMAL);
   }

@@ -111,7 +111,7 @@ static void rename_file(editor *e) {
 }
 
 void new_file_bindings(void) {
-  dispatch_bind_prefix_when('N', begin, "N", "Create new file", empty);
+  dispatch_bind_prefix_when('N', begin, "N", "New file", empty);
 }
 
 static int absolute(const char *path) {

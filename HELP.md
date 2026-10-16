@@ -44,6 +44,8 @@ C-x } / {  Grow / shrink focused split or sidebar width
 C-x c      Close current split
 C-x k      Close current tab and all its splits
 Unsaved last references require confirmation before closing.
+C-SPC      Toggle selection mode (also C-x SPC)
+M-w / C-w / C-y  Copy / cut / paste the selection
 C-z / M-z  Undo / redo (also C-x z / C-x Z)
 C-x C-s    Save; C-x C-c quits
 Quick tab/split creation also works in MOVE.
@@ -76,6 +78,18 @@ unsaved edits and running Git operations still require confirmation.
 Cancelling a workspace replacement stops further writes and reloads clean
 buffers for files already changed.
 
+The Command Center groups its commands under headings: **FILE**, **EDIT**,
+**SEARCH**, **SIDEBAR**, **SPLITS** and **TABS**. Groups fill as many columns
+as the terminal width allows, so an 80×24 terminal shows every command
+without scrolling; narrower terminals first hide the shortcut column, then
+stack the groups in one scrolling column. Each row shows the key to press
+after `C-x`, the command and, dimmed on the right, the shortcut that runs it
+without `C-x`, if it has one: `C-x SPC` toggles selection mode, as `C-SPC` does. A
+command that cannot run in the current context, such as Close split with a
+single split, stays in place but dimmed; pressing its key leaves the menu
+open and says in the bottom bar that it is not available. `C-x ?` opens the
+navigation help, as the menu's bottom bar shows.
+
 | Key | Action |
 |-----|--------|
 | Arrows / C-f | Move text cursor; C-f moves right |
@@ -83,7 +97,7 @@ buffers for files already changed.
 | C-a / C-e | Start / end of line |
 | M-v / C-v | Page up / down |
 | M-< / M-> | Start / end of file |
-| C-SPC | Toggle selection mode |
+| C-SPC / C-x SPC | Toggle selection mode |
 | M-w / C-w / C-y | Copy / cut / paste |
 | Backspace / C-d | Delete backward / forward |
 | C-z / M-z | Undo / redo (also C-x z / C-x Z) |
@@ -238,8 +252,9 @@ its displayed width is clamped to leave space for the editor.
 
 In the **File Explorer** the tree starts in the workspace directory. Use arrows to navigate, expand and collapse folders. Enter toggles folders, opening a file with Enter targets the selected split and returns focus to the editor.
 
-With the Explorer focused and a file selected, the **C-x** command menu shows
-**n — Rename selected file** and **d — Delete selected file**.
+In the **SIDEBAR** group of the **C-x** command menu, **n — Rename selected file**
+and **d — Delete selected file** become available, rather than dimmed, while
+the Explorer is focused and a file is selected.
 **C-x n** renames the selected file in its current folder.
 Edit the name and press Enter; Esc or C-g cancels. Existing destinations are never
 overwritten. Open tabs and splits retain their shared buffer, unsaved edits,

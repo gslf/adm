@@ -244,7 +244,7 @@ int main(int argc, char **argv) {
   abuf ab = {0};
   dispatch_draw(&e, &ab);
   ab_append(&ab, "\0", 1);
-  assert(strstr(ab.b, "Save") && strstr(ab.b, "Up/Down scroll"));
+  assert(strstr(ab.b, "Close tab") && strstr(ab.b, "Up/Down: scroll"));
   ab_free(&ab);
   dispatch_key(&e, CTRL('g'));
   layout_only(&e);

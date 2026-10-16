@@ -5,6 +5,7 @@
 #include "search.h"
 
 #include <assert.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -95,6 +96,43 @@ static void prefix(editor *e, int suffix) {
   assert(!e->prefix_active);
 }
 
+// The drawn frame as plain text: escape sequences dropped, and a line break
+// wherever the cursor moves.
+static void frame_text(editor *e, char *text, size_t size) {
+  abuf ab = {0};
+  dispatch_draw(e, &ab);
+  size_t n = 0;
+  for (int i = 0; i < ab.len && n + 1 < size; i++) {
+    if (ab.b[i] != '\x1b') {
+      text[n++] = ab.b[i];
+      continue;
+    }
+    while (i + 1 < ab.len && !isalpha((unsigned char)ab.b[i + 1]))
+      i++;
+    if (++i < ab.len && ab.b[i] == 'H')
+      text[n++] = '\n';
+  }
+  text[n] = '\0';
+  ab_free(&ab);
+}
+
+// Whether a line of `text` holds `first` with `second` further right.
+static int on_one_line(const char *text, const char *first, const char *second) {
+  for (const char *at = strstr(text, first); at; at = strstr(at + 1, first)) {
+    const char *end = strchr(at, '\n');
+    const char *found = strstr(at + strlen(first), second);
+    if (found && (!end || found < end))
+      return 1;
+  }
+  return 0;
+}
+
+static void frame_raw(editor *e, abuf *ab) {
+  ab->len = 0;
+  dispatch_draw(e, ab);
+  ab_append(ab, "\0", 1);
+}
+
 static int only_in_split(const editor *e) {
   return e->windows.count > 1;
 }
@@ -146,6 +184,14 @@ int main(int argc, char **argv) {
   dispatch_key(&e, CTRL('g'));
   assert(!e.prefix_active && e.view->sel_active); // Cancel only the modal.
   dispatch_key(&e, CTRL('g'));
+  assert(!e.view->sel_mode && !e.view->sel_active);
+
+  // C-x SPC enters the same selection mode as C-SPC, and leaves it again.
+  prefix(&e, ' ');
+  assert(e.view->sel_mode && !e.view->sel_active);
+  dispatch_key(&e, CTRL('f'));
+  assert(e.view->sel_active && selection_char_count(&e) == 1);
+  prefix(&e, ' ');
   assert(!e.view->sel_mode && !e.view->sel_active);
 
 #ifndef _WIN32
@@ -207,68 +253,95 @@ int main(int argc, char **argv) {
   cursor_screen_bottom(&e);
   assert(e.view->cy == 2);
 
-  dispatch_key(&e, CTRL('x'));
+  // Commands sit under headings in a fixed order; on 80x24 two columns hold
+  // them all, with nothing to scroll.
+  char menu[32768];
   abuf ab = {0};
-  dispatch_draw(&e, &ab);
-  ab_append(&ab, "\0", 1);
-  assert(strstr(ab.b, "adm - Command Center"));
-  assert(strstr(ab.b, "Save") && strstr(ab.b, "Quit"));
-  assert(strstr(ab.b, "Go to Line") && strstr(ab.b, "Move between splits"));
-  assert(strstr(ab.b, " - Save") && !strstr(ab.b, "C-s [")); // No brackets without a direct binding.
-  ab_free(&ab);
+  dispatch_key(&e, CTRL('x'));
+  frame_text(&e, menu, sizeof menu);
+  assert(strstr(menu, "adm - Command Center"));
+  assert(command_menu_count(&e) <= command_menu_capacity(&e));
+  assert(on_one_line(menu, " FILE ", " SIDEBAR "));
+  assert(strstr(menu, " FILE ") < strstr(menu, " EDIT ") &&
+         strstr(menu, " EDIT ") < strstr(menu, " SEARCH "));
+  assert(strstr(menu, " SPLITS ") && strstr(menu, " TABS ") && !strstr(menu, " MORE "));
+  assert(strstr(menu, "C-s  Save") && strstr(menu, "]/[  Grow / shrink height"));
+  // Direct shortcuts sit at the right of their row.
+  assert(on_one_line(menu, "SPC  Selection mode", "C-SPC"));
+  assert(on_one_line(menu, "s    Search file", "C-s"));
+  assert(!on_one_line(menu, "C-s  Save", "C-s"));
+  assert(on_one_line(menu, "?: help", "Esc: close") && !strstr(menu, "Up/Down: scroll"));
+  assert(!strstr(menu, "Help")); // ? lives in the bottom bar, not in a group
+
+  // A command that cannot run now keeps its place, dimmed, and its key says
+  // why nothing happened instead of closing the menu.
+  frame_raw(&e, &ab);
+  assert(strstr(ab.b, "\x1b[2mc\x1b[22m") && strstr(ab.b, "\x1b[1mq\x1b[22m"));
+  dispatch_key(&e, 'c');
+  assert(e.prefix_active && !strcmp(e.notice, "Close split: not available here"));
+
+  // Narrower terminals drop the shortcuts before a column; the narrowest
+  // stack every group in one scrolling column.
+  e.cols = 70;
+  frame_text(&e, menu, sizeof menu);
+  assert(on_one_line(menu, " FILE ", " SIDEBAR ") && !strstr(menu, "C-SPC"));
+  e.cols = 40;
+  frame_text(&e, menu, sizeof menu);
+  assert(!on_one_line(menu, " FILE ", " SIDEBAR ") && strstr(menu, "C-SPC"));
+  assert(strstr(menu, "Up/Down: scroll"));
+  e.cols = 80;
   dispatch_key(&e, '\x1b');
 
-  // Display aliases from the live registry, including rebinding/removal.
+  // Rows follow the live registry: a command no group lists lands under
+  // MORE, and shortcuts track rebinding and removal.
+  e.rows = 40;
+  e.cols = 100;
   dispatch_bind(CTRL('p'), cursor_up);
   dispatch_bind(CTRL('n'), cursor_down);
   dispatch_bind_prefix('p', cursor_up, "p", "Move up");
   dispatch_bind_prefix('<', cursor_file_start, "<", "File start");
   dispatch_key(&e, CTRL('x'));
-  dispatch_draw(&e, &ab);
-  ab_append(&ab, "\0", 1);
-  assert(strstr(ab.b, "p [C-p, Up]") && strstr(ab.b, " - Move up"));
-  assert(strstr(ab.b, "< [M-<, C-Home] - File start"));
-  ab_free(&ab);
+  frame_text(&e, menu, sizeof menu);
+  assert(strstr(menu, " MORE ") && strstr(menu, "p    Move up"));
+  assert(on_one_line(menu, "Move up", "C-p, Up"));
+  assert(on_one_line(menu, "<    File start", "M-<, C-Home"));
   dispatch_bind(KEY_UP, NULL);
-  dispatch_draw(&e, &ab);
-  ab_append(&ab, "\0", 1);
-  assert(strstr(ab.b, "p [C-p]") && strstr(ab.b, " - Move up"));
-  assert(!strstr(ab.b, "p [C-p, Up]"));
-  ab_free(&ab);
+  frame_text(&e, menu, sizeof menu);
+  assert(on_one_line(menu, "Move up", "C-p") && !strstr(menu, "C-p, Up"));
   dispatch_bind(CTRL('p'), cursor_down);
-  dispatch_draw(&e, &ab);
-  ab_append(&ab, "\0", 1);
-  assert(strstr(ab.b, " - Move up"));
-  assert(!strstr(ab.b, "p [C-p]"));
-  ab_free(&ab);
+  frame_text(&e, menu, sizeof menu);
+  assert(strstr(menu, "Move up") && !on_one_line(menu, "Move up", "C-p"));
   dispatch_bind(CTRL('p'), cursor_up);
   dispatch_bind(KEY_UP, cursor_up);
-  dispatch_bind_prefix('n', cursor_down, "n", "Move down");
-  dispatch_pair_prefix('p', 'n', "Move up / down");
-  assert(command_menu_count(&e) == dispatch_prefix_count(&e));
-  dispatch_draw(&e, &ab);
-  ab_append(&ab, "\0", 1);
-  assert(strstr(ab.b, "p [C-p, Up] / n [C-n, Down]"));
-  assert(strstr(ab.b, " - Move up / down"));
-  ab_free(&ab);
+  dispatch_bind_prefix('o', cursor_down, "o", "Move down");
+  dispatch_pair_prefix('p', 'o', "Move up / down");
+  frame_text(&e, menu, sizeof menu);
+  assert(strstr(menu, "p/o  Move up / down") && !strstr(menu, "o    Move down"));
+  assert(on_one_line(menu, "Move up / down", "C-p, Up/C-n, Down"));
 
   e.rows = 10;
   command_menu_scroll(&e, 1000);
   assert(e.prefix_scroll == command_menu_count(&e) - command_menu_capacity(&e));
-  e.rows = 24;
+  e.rows = 40;
   command_menu_scroll(&e, 0);
 
+  // Half a pair that cannot run is dimmed on its own; the row stays whole.
   dispatch_bind_prefix_when('p', cursor_up, "p", "Move up", only_in_split);
-  dispatch_pair_prefix('p', 'n', "Move up / down");
-  assert(command_menu_count(&e) == dispatch_prefix_count(&e) + 1);
-  dispatch_draw(&e, &ab);
-  ab_append(&ab, "\0", 1);
-  assert(strstr(ab.b, "n [C-n, Down]") && strstr(ab.b, " - Move down"));
-  assert(!strstr(ab.b, "Move up / down"));
-  ab_free(&ab);
+  dispatch_pair_prefix('p', 'o', "Move up / down");
+  frame_raw(&e, &ab);
+  assert(strstr(ab.b, "\x1b[2mp\x1b[22m") && strstr(ab.b, "\x1b[1mo\x1b[22m"));
+  frame_text(&e, menu, sizeof menu);
+  assert(strstr(menu, "p/o  Move up / down"));
+  dispatch_key(&e, 'p');
+  assert(e.prefix_active && !strcmp(e.notice, "Move up: not available here"));
 
   dispatch_bind_prefix('p', cursor_up, "p", "Move up");
-  assert(command_menu_count(&e) == dispatch_prefix_count(&e) + 1); // Rebinding breaks the old pair.
+  frame_text(&e, menu, sizeof menu); // Rebinding breaks the old pair.
+  assert(strstr(menu, "p    Move up") && strstr(menu, "o    Move down"));
+  assert(!strstr(menu, "Move up / down"));
+  ab_free(&ab);
+  e.rows = 24;
+  e.cols = 80;
   dispatch_key(&e, 'p');
   assert(!e.prefix_active && e.view->cy == 1);
 

@@ -168,7 +168,7 @@ void file_manager_key(editor *e, int key) {
 }
 
 void file_manager_bindings(void) {
-  dispatch_bind_prefix_global('f', open_panel, "f", "Open File Explorer");
+  dispatch_bind_prefix_global('f', open_panel, "f", "File Explorer");
   dispatch_bind_prefix_global_when('n', rename_selected, "n", "Rename selected file", selected_file);
   dispatch_bind_prefix_global_when('d', delete_selected, "d", "Delete selected file", selected_file);
 }

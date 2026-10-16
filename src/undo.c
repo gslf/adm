@@ -783,7 +783,7 @@ static void init(editor *e) {
   dispatch_bind(META('z'), redo_command);
   dispatch_bind_prefix_when('z', undo_command, "z", "Undo", can_undo);
   dispatch_bind_prefix_when('Z', redo_command, "Z", "Redo", can_redo);
-  dispatch_pair_prefix('z', 'Z', "Undo / Redo");
+  dispatch_pair_prefix('z', 'Z', "Undo / redo");
 }
 static void changed(editor *e) {
   if (e->undo && !e->undo->depth)

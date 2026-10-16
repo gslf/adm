@@ -476,7 +476,7 @@ void layout_bindings(void) {
   dispatch_bind_prefix_when('[', shrink_height, "[", "Shrink height", can_shrink_height);
   dispatch_bind_prefix_global_when('}', grow_width, "}", "Grow width", can_grow_width);
   dispatch_bind_prefix_global_when('{', shrink_width, "{", "Shrink width", can_shrink_width);
-  dispatch_bind_prefix_when('c', layout_close, "c", "Close current split", has_splits);
-  dispatch_pair_prefix(']', '[', "Grow / Shrink height");
-  dispatch_pair_prefix('}', '{', "Grow / Shrink width");
+  dispatch_bind_prefix_when('c', layout_close, "c", "Close split", has_splits);
+  dispatch_pair_prefix(']', '[', "Grow / shrink height");
+  dispatch_pair_prefix('}', '{', "Grow / shrink width");
 }

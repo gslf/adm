@@ -186,10 +186,12 @@ def run(binary):
             assert " [C-x] " in update()
             initial_menu = update(b"\x18")
             assert "][ adm - Command Center" in initial_menu
-            assert "Move between splits" in initial_menu and "Navigation help" in initial_menu
+            assert "Move between splits" in initial_menu and "?: help" in initial_menu
             assert "Next / Previous pane" not in initial_menu and not terminal.cursor_visible
-            save_row = next(i for i, row in enumerate(terminal.lines()) if " - Save" in row)
-            assert not terminal.lines()[save_row - 1].split("|")[1].strip()
+            # Grouped in two columns, the whole menu fits 80x24 without scrolling.
+            assert " FILE " in initial_menu and " SPLITS " in initial_menu
+            assert "C-s  Save" in initial_menu and "Up/Down: scroll" not in initial_menu
+            assert any(" FILE " in row and " SIDEBAR " in row for row in terminal.lines())
             horizontal = update(b"q")
             assert " FILES *" in horizontal and "* 2  [Empty]" in horizontal
             # Open the same document into each new empty split.
@@ -199,9 +201,10 @@ def run(binary):
             mixed = update(b"\x11\r")
             assert mixed.count("alpha è 界") == 4
             popup = update(b"\x18")
-            assert "Move between splits" in popup and "Close current split" in popup
-            assert "} / {" in popup and "Grow / Shrink width" in popup
-            assert "Split side by side" not in popup and not terminal.cursor_visible
+            assert "Move between splits" in popup and "Close split" in popup
+            assert "}/{" in popup and "Grow / shrink width" in popup
+            # A command that cannot run now keeps its row, dimmed.
+            assert "Split side by side" in popup and not terminal.cursor_visible
             moved = update(b"\x07\x18m")
             assert " MOVE " in moved and not terminal.cursor_visible
             assert "h/j/k/l: split" in terminal.lines()[-1] and "b: sidebar" in terminal.lines()[-1]
@@ -220,9 +223,9 @@ def run(binary):
             compact = resize(12, 40)
             assert compact.count("doc.txt") == 3
             menu = update(b"\x18")
-            assert "Up/Down scroll" in menu
-            menu = update(b"\x1b[6~\x1b[6~")
-            assert "Save" in menu and "Quit" in menu
+            assert "Up/Down: scroll" in menu and "C-s  Save" in menu
+            menu = update(b"\x1b[6~" * 6)
+            assert "Close tab" in menu and "C-s  Save" not in menu
             update(b"\x07")
             resize(24, 80)
             update(b"\x18c\x18c\x18c\x1b<")
@@ -245,7 +248,7 @@ def run(binary):
             assert "Navigation help" in help_text and "C-h C-j C-k C-l C-b C-n C-p" in help_text
             assert " HELP " in help_text and not terminal.cursor_visible
             update(b"\x1b[6~")
-            assert "C-x k" in update()
+            assert "Create a named file in an empty split" in update()
             update(b"\x1b")
             warning = update(b"!\x18\x03")
             assert "Quit without saving? y=yes / any=no" in warning
@@ -417,7 +420,7 @@ def run_wrap(binary):
             menu = update(b"\x18")
             for _ in range(4):
                 menu += update(b"\x1b[6~")
-            assert any("| w       - Toggle word wrap" in line for line in menu), menu
+            assert any("w    Word wrap" in line for line in menu), menu
             update(b"\x07")
             # Without wrapping the long line scrolls sideways on one row.
             lines = update(b"\x18w")
@@ -474,8 +477,8 @@ def run_file_operations(binary):
             update(b"\x1b")
             prompt = update(b"\x18n")
             assert " RENAME alpha.c" in prompt and terminal.cursor_visible
-            # Unix must keep its original blue active palette and yellow status.
-            assert terminal.backgrounds[1][0] == 44 and terminal.foregrounds[1][0] == 97
+            # The default palette keeps the interface to yellows and greys.
+            assert terminal.backgrounds[1][0] == 43 and terminal.foregrounds[1][0] == 30
             assert terminal.backgrounds[0][0] == 103
             assert "R: " in resize(5, 9) and terminal.col < 9
             assert " RENAME " in resize(24, 100)
@@ -538,7 +541,7 @@ def run_file_manager(binary):
         try:
             update()
             popup = update(b"\x18")
-            assert "Open File Explorer" in popup and "Move between splits" in popup
+            assert "File Explorer" in popup and "Move between splits" in popup
             tree = update(b"f")
             assert " FILES *" in tree
             assert "alpha text" in tree and "界è.txt" in tree
@@ -663,7 +666,7 @@ def run_git(binary, create_repository):
             assert all(colour is None for colour in terminal.backgrounds[header][41:])
             added_row = next(i for i, line in enumerate(terminal.lines()) if "+staged" in line)
             update(b"\x18l" + str(added_row).encode() + b"\r\x01\x00\x06")
-            assert terminal.backgrounds[added_row][43] == 44
+            assert terminal.backgrounds[added_row][43] == 240
             assert all(colour == 22 for colour in terminal.backgrounds[added_row][44:])
             update(b"\x07")
             assert all(colour == 22 for colour in terminal.backgrounds[added_row][41:])
@@ -794,7 +797,7 @@ def run_search(binary):
             update(b"\x02")
             # Parallel files arrive in completion order; select by name.
             for _ in range(2):
-                if any("other.txt" in row and terminal.backgrounds[i][0] == 44
+                if any("other.txt" in row and terminal.backgrounds[i][0] == 43
                        for i, row in enumerate(terminal.lines())):
                     break
                 update(b"\x1b[B")
