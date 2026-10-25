@@ -1,0 +1,49 @@
+name: Serve build artifacts
+description: >
+  Serves this run's release archives and their SHA256SUMS.txt over a local
+  HTTP server, and points the installers at it through ADM_DOWNLOAD_BASE.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: ${{ runner.temp }}/adm-dist
+        merge-multiple: true
+
+    - name: Generate checksums
+      shell: bash
+      working-directory: ${{ runner.temp }}/adm-dist
+      run: |
+        if [ "$RUNNER_OS" = Windows ]; then py=python; else py=python3; fi
+        "$py" -c "
+        import hashlib, pathlib
+        lines = [f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}'
+                 for p in sorted(pathlib.Path('.').iterdir()) if p.name != 'SHA256SUMS.txt']
+        pathlib.Path('SHA256SUMS.txt').write_text('\n'.join(lines) + '\n')
+        "
+        cat SHA256SUMS.txt
+
+    - name: Start server (POSIX)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        nohup python3 -m http.server 8765 --bind 127.0.0.1 --directory "$RUNNER_TEMP/adm-dist" > "$RUNNER_TEMP/http.log" 2>&1 &
+        echo "ADM_DOWNLOAD_BASE=http://127.0.0.1:8765" >> "$GITHUB_ENV"
+
+    - name: Start server (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Start-Process python -ArgumentList '-m', 'http.server', '8765', '--bind', '127.0.0.1', '--directory', "$env:RUNNER_TEMP\adm-dist" -WindowStyle Hidden
+        "ADM_DOWNLOAD_BASE=http://127.0.0.1:8765" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+    - name: Wait for server
+      shell: bash
+      run: |
+        for i in $(seq 1 30); do
+          curl -fsS -o /dev/null http://127.0.0.1:8765/SHA256SUMS.txt && exit 0
+          sleep 1
+        done
+        echo "artifact server did not start" >&2
+        exit 1

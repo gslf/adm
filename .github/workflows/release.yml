@@ -68,9 +68,20 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  test-install:
+    name: Test installers
+    needs: build
+    uses: ./.github/workflows/install.yml
+    with:
+      version: ${{ github.ref_name }}
+      local-artifacts: true
+
+  # Tags with a suffix (v0.0.0-ci-test) run the build and installer tests
+  # without publishing anything.
   release:
     name: Create release
-    needs: build
+    needs: test-install
+    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -89,3 +100,12 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+  verify-release:
+    name: Verify published release
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    uses: ./.github/workflows/install.yml
+    with:
+      version: ${{ github.ref_name }}
+      script-ref: main

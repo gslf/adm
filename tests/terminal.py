@@ -1059,8 +1059,18 @@ def run_escape(binary):
             assert "[B" not in screen and " 2:1 " in terminal.lines()[-1], screen
             assert "2 asecond" in quickly(b"\x1b", b"a")
             update(b"\x7f")
-            # Esc followed quickly by a Meta key still stands for Alt.
-            assert "LSP  M-x" in quickly(b"\x1b", b"x")
+            # Esc followed quickly by a Meta key still stands for Alt. A busy
+            # machine can deliver the x past the Meta window, where it is typed
+            # as text: delete it and try again.
+            for _ in range(5):
+                screen = quickly(b"\x1b", b"x")
+                if "LSP  M-x" not in screen and "xsecond" not in screen:
+                    wait_for(lambda text: "LSP  M-x" in text or "xsecond" in text)
+                    screen = "\n".join(terminal.lines())
+                if "xsecond" not in screen:
+                    break
+                update(b"\x7f")
+            assert "LSP  M-x" in screen, screen
             update(b"\x1b")
             assert "LSP  M-x" in update(b"\x1bx")
             update(b"\x1b")

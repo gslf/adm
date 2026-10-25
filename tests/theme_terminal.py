@@ -10,6 +10,7 @@ import struct
 import subprocess
 import tempfile
 import termios
+import time
 
 
 def run(binary, themes, library):
@@ -36,35 +37,47 @@ def run(binary, themes, library):
             terminal.feed(read_frame(master))
             return "\n".join(terminal.lines())
 
+        def settle(keys, ready, timeout=5):
+            # Frames can take longer than one read on a busy machine (startup
+            # loads the configuration, theme and plugin): keep reading until
+            # the screen reaches the expected state, then let the asserts run.
+            deadline = time.monotonic() + timeout
+            screen = update(keys)
+            while not ready(screen) and time.monotonic() < deadline:
+                screen = update()
+            return screen
+
+        stamp = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZint"
         try:
-            assert "int value = 42;" in update()
+            settle(b"", lambda text: "int value = 42;" in text)
             row = terminal.lines()[1]
             assert terminal.foregrounds[1][row.index("int")] == 110
             assert terminal.foregrounds[1][row.index("42")] == 173
             assert terminal.backgrounds[1][row.index("value")] == 234
             assert terminal.backgrounds[0][0] == 110
-            text = update(b"\x1bc")
+            text = settle(b"\x1bc", lambda text: "USER CENTER" in text)
             assert "USER CENTER" in text and "Insert UTC timestamp" in text
             assert not terminal.cursor_visible
             assert terminal.backgrounds[1][0] == 24
-            update(b"\x1b")
+            settle(b"\x1b", lambda text: terminal.cursor_visible)
             assert terminal.cursor_visible
-            text = update(b"\x1bct")
+            text = settle(b"\x1bct", lambda text: re.search(stamp, text))
             assert "USER CENTER" not in text
-            assert re.search(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZint", text)
-            update(b"\x1a")
-            assert "int value = 42;" in update() and "Zint" not in update()
-            update(b"\x1bz")
-            update(b"\x18\x13")
-            assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZint value = 42;\n", document.read_text())
-            update(b"\x1bc")
+            assert re.search(stamp, text)
+            text = settle(b"\x1a", lambda text: "Zint" not in text)
+            assert "int value = 42;" in text and "Zint" not in text
+            settle(b"\x1bz", lambda text: "Zint" in text)
+            saved = stamp + r" value = 42;\n"
+            settle(b"\x18\x13", lambda text: re.fullmatch(saved, document.read_text()))
+            assert re.fullmatch(saved, document.read_text())
+            settle(b"\x1bc", lambda text: "USER CENTER" in text)
             terminal.resize(6, 28)
             fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 6, 28, 0, 0))
             process.send_signal(signal.SIGWINCH)
-            text = update()
+            text = settle(b"", lambda text: "USER Up/Dn Enter/key Esc" in terminal.lines()[-1])
             assert "USER CENTER" in text and "UTC timestamp" in text
             assert "USER Up/Dn Enter/key Esc" in terminal.lines()[-1]
-            update(b"\x1b")
+            settle(b"\x1b", lambda text: terminal.cursor_visible)
             update(b"\x18\x03")
             terminal.feed(wait_exit(process, master))
             assert terminal.background is None and terminal.foreground is None
