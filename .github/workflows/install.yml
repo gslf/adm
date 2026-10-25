@@ -4,7 +4,7 @@ name: Installers
 # release build. Called by the release workflow with the freshly built
 # archives (served from a local HTTP server before anything is published) and
 # with the published release; runs on its own against the latest release when
-# the installers change.
+# the installers change on any branch.
 
 on:
   workflow_call:
@@ -28,7 +28,6 @@ on:
         type: string
         default: ""
   push:
-    branches: [main]
     paths: [install.sh, install.ps1, .github/workflows/install.yml]
   pull_request:
     paths: [install.sh, install.ps1, .github/workflows/install.yml]
