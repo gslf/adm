@@ -28,6 +28,7 @@ on:
         type: string
         default: ""
   push:
+    branches: ["**"]
     paths: [install.sh, install.ps1, .github/workflows/install.yml]
   pull_request:
     paths: [install.sh, install.ps1, .github/workflows/install.yml]
