@@ -1,0 +1,145 @@
+name: Installers
+
+# Exercises install.sh and install.ps1 end to end on every platform with a
+# release build. Called by the release workflow with the freshly built
+# archives (served from a local HTTP server before anything is published) and
+# with the published release; runs on its own against the latest release when
+# the installers change.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release tag to install
+        type: string
+        required: true
+      local-artifacts:
+        description: Serve the workflow's build artifacts instead of the GitHub release
+        type: boolean
+        default: false
+      script-ref:
+        description: Fetch the installer from raw.githubusercontent.com at this ref instead of the checkout
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release tag to install (empty for latest)
+        type: string
+        default: ""
+  push:
+    branches: [main]
+    paths: [install.sh, install.ps1, .github/workflows/install.yml]
+  pull_request:
+    paths: [install.sh, install.ps1, .github/workflows/install.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  unix:
+    name: install.sh (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      ADM_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Serve build artifacts
+        if: inputs.local-artifacts
+        uses: ./.github/actions/serve-artifacts
+
+      - name: Fetch published installer
+        if: inputs.script-ref != ''
+        run: curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ inputs.script-ref }}/install.sh" -o install.sh
+
+      - name: Install into a clean home
+        run: |
+          export HOME="$RUNNER_TEMP/home"
+          mkdir -p "$HOME"
+          # Pipe the script exactly as the documented one-liner does.
+          sh < install.sh
+          # A second run must upgrade in place without duplicating PATH lines.
+          sh -s -- --no-modify-path < install.sh
+
+      - name: Verify installation
+        run: |
+          home="$RUNNER_TEMP/home"
+          test -x "$home/.local/share/adm/adm"
+          test -L "$home/.local/bin/adm"
+          test -d "$home/.local/share/adm/themes"
+          test "$(grep -c 'Added by the adm installer' "$home/.profile")" = 1
+          # A new login shell finds adm through the updated PATH.
+          found=$(env -i HOME="$home" PATH=/usr/bin:/bin sh -lc 'command -v adm')
+          test "$found" = "$home/.local/bin/adm"
+          # The binary runs on this platform: without a terminal it reports
+          # the terminal error instead of failing to load.
+          if "$found" < /dev/null 2> err.txt; then exit 1; fi
+          grep -q 'TERMINAL INITIALIZATION ERROR' err.txt
+
+      - name: Custom directories without PATH changes
+        run: |
+          export HOME="$RUNNER_TEMP/home2"
+          mkdir -p "$HOME"
+          ADM_INSTALL_DIR="$RUNNER_TEMP/opt/adm" sh -s -- --bin-dir "$RUNNER_TEMP/bin" --no-modify-path < install.sh
+          test -x "$RUNNER_TEMP/opt/adm/adm"
+          test "$(readlink "$RUNNER_TEMP/bin/adm")" = "$RUNNER_TEMP/opt/adm/adm"
+          test ! -e "$HOME/.profile"
+
+  windows:
+    name: install.ps1 (windows-latest)
+    runs-on: windows-latest
+    env:
+      ADM_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Serve build artifacts
+        if: inputs.local-artifacts
+        uses: ./.github/actions/serve-artifacts
+
+      - name: Fetch published installer
+        if: inputs.script-ref != ''
+        shell: pwsh
+        run: Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/${{ github.repository }}/${{ inputs.script-ref }}/install.ps1" -OutFile install.ps1
+
+      - name: Install with Windows PowerShell
+        shell: powershell
+        run: |
+          $env:ADM_INSTALL_DIR = "$env:RUNNER_TEMP\adm"
+          # Pipe the script exactly as the documented one-liner does.
+          Get-Content -Raw install.ps1 | Invoke-Expression
+          # A second run must upgrade in place without duplicating PATH entries.
+          Get-Content -Raw install.ps1 | Invoke-Expression
+
+      - name: Verify installation
+        shell: pwsh
+        run: |
+          $dir = "$env:RUNNER_TEMP\adm"
+          if (-not (Test-Path "$dir\adm.exe")) { throw 'adm.exe missing' }
+          if (-not (Test-Path "$dir\themes")) { throw 'themes missing' }
+          $userPath = (Get-Item 'HKCU:\Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+          $hits = @($userPath -split ';' | Where-Object { $_ -eq $dir }).Count
+          if ($hits -ne 1) { throw "expected $dir once in the user PATH, found $hits" }
+          # A new process resolves adm through the updated user PATH.
+          $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+          $found = (Get-Command adm).Source
+          if ($found -ne "$dir\adm.exe") { throw "adm resolves to $found" }
+          # The binary runs on this platform: without a console it reports
+          # the terminal error, or keeps running, instead of failing to load.
+          $p = Start-Process -FilePath $found -PassThru -NoNewWindow -RedirectStandardInput install.ps1 -RedirectStandardError err.txt
+          if (-not $p.WaitForExit(5000)) { $p.Kill(); exit 0 }
+          if (-not (Select-String -Quiet 'TERMINAL INITIALIZATION ERROR' err.txt)) { throw "adm.exe exited with $($p.ExitCode)" }
+
+      - name: Remove test PATH entry
+        if: always()
+        shell: pwsh
+        run: |
+          $dir = "$env:RUNNER_TEMP\adm"
+          $userPath = (Get-Item 'HKCU:\Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+          $rest = ($userPath -split ';' | Where-Object { $_ -and $_ -ne $dir }) -join ';'
+          Set-ItemProperty -Path 'HKCU:\Environment' -Name 'Path' -Type ExpandString -Value $rest

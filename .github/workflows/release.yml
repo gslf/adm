@@ -68,9 +68,17 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  test-install:
+    name: Test installers
+    needs: build
+    uses: ./.github/workflows/install.yml
+    with:
+      version: ${{ github.ref_name }}
+      local-artifacts: true
+
   release:
     name: Create release
-    needs: build
+    needs: test-install
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
@@ -89,3 +97,11 @@ jobs:
         with:
           files: dist/*
           generate_release_notes: true
+
+  verify-release:
+    name: Verify published release
+    needs: release
+    uses: ./.github/workflows/install.yml
+    with:
+      version: ${{ github.ref_name }}
+      script-ref: main
